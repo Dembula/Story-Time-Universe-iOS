@@ -104,23 +104,30 @@ struct HomeView: View {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
-        do {
-            async let featuredReq = ViewerAPI.shared.fetchContent(featured: true, limit: 8)
-            async let trendingReq = ViewerAPI.shared.fetchContent(limit: 16)
-            async let moviesReq = ViewerAPI.shared.fetchContent(type: "MOVIE", limit: 16)
-            async let seriesReq = ViewerAPI.shared.fetchContent(type: "SERIES", limit: 16)
-            async let showsReq = ViewerAPI.shared.fetchContent(type: "SHOW", limit: 16)
-            async let continueReq = ViewerAPI.shared.fetchContinueWatching()
 
-            let (f, t, m, s, sh, cw) = try await (featuredReq, trendingReq, moviesReq, seriesReq, showsReq, continueReq)
-            featured = f.isEmpty ? Array(t.prefix(5)) : f
-            trending = t
-            movies = m
-            series = s
-            shows = sh
-            continueWatching = cw
-        } catch {
-            errorMessage = error.localizedDescription
+        async let featuredReq = ViewerAPI.shared.fetchContent(featured: true, limit: 8)
+        async let trendingReq = ViewerAPI.shared.fetchContent(limit: 16)
+        async let moviesReq = ViewerAPI.shared.fetchContent(type: "MOVIE", limit: 16)
+        async let seriesReq = ViewerAPI.shared.fetchContent(type: "SERIES", limit: 16)
+        async let showsReq = ViewerAPI.shared.fetchContent(type: "SHOW", limit: 16)
+        async let continueReq = ViewerAPI.shared.fetchContinueWatching()
+
+        let f = (try? await featuredReq) ?? []
+        let t = (try? await trendingReq) ?? []
+        let m = (try? await moviesReq) ?? []
+        let s = (try? await seriesReq) ?? []
+        let sh = (try? await showsReq) ?? []
+        let cw = (try? await continueReq) ?? []
+
+        featured = f.isEmpty ? Array(t.prefix(5)) : f
+        trending = t
+        movies = m
+        series = s
+        shows = sh
+        continueWatching = cw
+
+        if featured.isEmpty && trending.isEmpty && movies.isEmpty {
+            errorMessage = "Could not load the catalogue. Pull to refresh."
         }
     }
 }

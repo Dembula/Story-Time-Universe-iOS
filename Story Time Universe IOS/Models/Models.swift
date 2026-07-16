@@ -62,17 +62,91 @@ struct ContentItem: Codable, Identifiable, Hashable {
         (type ?? "TITLE").replacingOccurrences(of: "_", with: " ").capitalized
     }
 
-    var posterURL: URL? {
-        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
+    var posterCandidates: [URL] {
+        MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
     }
 
-    var backdropURL: URL? {
-        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
-            ?? posterURL
+    var backdropCandidates: [URL] {
+        let list = MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
+        return list.isEmpty ? posterCandidates : list
     }
+
+    var posterURL: URL? { posterCandidates.first }
+    var backdropURL: URL? { backdropCandidates.first }
 
     static func makeURL(_ raw: String?) -> URL? {
         MediaURL.httpURL(from: raw) ?? MediaURL.previewProxyURL(from: raw)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, description, type, category, year
+        case posterUrl, backdropUrl, trailerUrl, videoUrl
+        case duration, featured, tags, minAge
+    }
+
+    init(
+        id: String,
+        title: String,
+        description: String? = nil,
+        type: String? = nil,
+        category: String? = nil,
+        year: Int? = nil,
+        posterUrl: String? = nil,
+        backdropUrl: String? = nil,
+        trailerUrl: String? = nil,
+        videoUrl: String? = nil,
+        duration: Int? = nil,
+        featured: Bool? = nil,
+        tags: String? = nil,
+        minAge: Int? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.type = type
+        self.category = category
+        self.year = year
+        self.posterUrl = posterUrl
+        self.backdropUrl = backdropUrl
+        self.trailerUrl = trailerUrl
+        self.videoUrl = videoUrl
+        self.duration = duration
+        self.featured = featured
+        self.tags = tags
+        self.minAge = minAge
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        type = try c.decodeIfPresent(String.self, forKey: .type)
+        category = try c.decodeIfPresent(String.self, forKey: .category)
+        year = Self.decodeFlexibleInt(c, forKey: .year)
+        posterUrl = try c.decodeIfPresent(String.self, forKey: .posterUrl)
+        backdropUrl = try c.decodeIfPresent(String.self, forKey: .backdropUrl)
+        trailerUrl = try c.decodeIfPresent(String.self, forKey: .trailerUrl)
+        videoUrl = try c.decodeIfPresent(String.self, forKey: .videoUrl)
+        duration = Self.decodeFlexibleInt(c, forKey: .duration)
+        featured = try c.decodeIfPresent(Bool.self, forKey: .featured)
+        tags = Self.decodeFlexibleString(c, forKey: .tags)
+        minAge = Self.decodeFlexibleInt(c, forKey: .minAge)
+    }
+
+    private static func decodeFlexibleInt(_ c: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Int? {
+        if let v = try? c.decodeIfPresent(Int.self, forKey: key) { return v }
+        if let v = try? c.decodeIfPresent(Double.self, forKey: key) { return Int(v) }
+        if let s = try? c.decodeIfPresent(String.self, forKey: key), let v = Int(s) { return v }
+        return nil
+    }
+
+    private static func decodeFlexibleString(_ c: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> String? {
+        if let v = try? c.decodeIfPresent(String.self, forKey: key) { return v }
+        if let arr = try? c.decodeIfPresent([String].self, forKey: key) {
+            return arr.joined(separator: ", ")
+        }
+        return nil
     }
 }
 
@@ -90,12 +164,14 @@ struct ContinueWatchingItem: Codable, Identifiable, Hashable {
     let durationSeconds: Int?
     let progressPercent: Int?
 
-    var posterURL: URL? {
-        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
+    var posterCandidates: [URL] {
+        MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
     }
 
+    var posterURL: URL? { posterCandidates.first }
+
     var backdropURL: URL? {
-        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
+        MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true).first
             ?? posterURL
     }
 
@@ -174,14 +250,18 @@ struct ContentDetail: Codable, Identifiable, Hashable {
     let ratingStats: RatingStats?
     let seasons: [Season]?
 
-    var posterURL: URL? {
-        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
+    var posterCandidates: [URL] {
+        MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
     }
 
-    var backdropURL: URL? {
-        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
-            ?? posterURL
+    var backdropCandidates: [URL] {
+        let list = MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
+        return list.isEmpty ? posterCandidates : list
     }
+
+    var posterURL: URL? { posterCandidates.first }
+
+    var backdropURL: URL? { backdropCandidates.first }
 
     var asContentItem: ContentItem {
         ContentItem(
@@ -250,9 +330,11 @@ struct SearchResult: Codable, Identifiable, Hashable {
     let posterUrl: String?
     let creatorName: String?
 
-    var posterURL: URL? {
-        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: nil, videoUrl: nil, preferBackdrop: false)
+    var posterCandidates: [URL] {
+        MediaURL.candidates(posterUrl: posterUrl, backdropUrl: nil, videoUrl: nil, preferBackdrop: false)
     }
+
+    var posterURL: URL? { posterCandidates.first }
 
     var asContentItem: ContentItem {
         ContentItem(

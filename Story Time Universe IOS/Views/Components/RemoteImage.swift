@@ -1,34 +1,42 @@
 import SwiftUI
 import UIKit
 
-/// Loads remote images with shared cookie storage so authenticated preview URLs work.
+/// Loads remote images with shared cookies and multi-URL fallbacks.
 struct RemoteImage: View {
-    let url: URL?
+    let urls: [URL]
     var contentMode: ContentMode = .fill
 
     @State private var image: UIImage?
     @State private var failed = false
-    @State private var loading = false
+
+    init(url: URL?, contentMode: ContentMode = .fill) {
+        self.urls = url.map { [$0] } ?? []
+        self.contentMode = contentMode
+    }
+
+    init(urls: [URL], contentMode: ContentMode = .fill) {
+        self.urls = urls
+        self.contentMode = contentMode
+    }
 
     var body: some View {
-        Group {
+        ZStack {
             if let image {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
-            } else if failed || url == nil {
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+            } else if failed || urls.isEmpty {
                 placeholder
             } else {
-                ZStack {
-                    placeholder
-                    ProgressView()
-                        .tint(Theme.accent)
-                        .scaleEffect(0.85)
-                }
+                placeholder
+                ProgressView()
+                    .tint(Theme.accent)
+                    .scaleEffect(0.85)
             }
         }
-        .background(Theme.card)
-        .task(id: url?.absoluteString) {
+        .clipped()
+        .task(id: urls.map(\.absoluteString).joined(separator: "|")) {
             await load()
         }
     }
@@ -36,50 +44,62 @@ struct RemoteImage: View {
     private var placeholder: some View {
         ZStack {
             LinearGradient(
-                colors: [Color.white.opacity(0.06), Color.white.opacity(0.02)],
+                colors: [
+                    Color(red: 0.12, green: 0.12, blue: 0.14),
+                    Color(red: 0.06, green: 0.06, blue: 0.07),
+                ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             Image(systemName: "film")
                 .font(.title2)
-                .foregroundStyle(Theme.muted.opacity(0.7))
+                .foregroundStyle(Theme.muted.opacity(0.55))
         }
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
     }
 
     private func load() async {
-        guard let url else {
-            image = nil
+        image = nil
+        failed = false
+        guard !urls.isEmpty else {
             failed = true
             return
         }
-        if let cached = ImageCache.shared.image(for: url) {
-            image = cached
-            failed = false
-            return
-        }
-        loading = true
-        failed = false
-        defer { loading = false }
 
+        for url in urls {
+            if let cached = ImageCache.shared.image(for: url) {
+                image = cached
+                failed = false
+                return
+            }
+            if let loaded = await fetchImage(url) {
+                ImageCache.shared.set(loaded, for: url)
+                image = loaded
+                failed = false
+                return
+            }
+        }
+        failed = true
+        image = nil
+    }
+
+    private func fetchImage(_ url: URL) async -> UIImage? {
         var request = URLRequest(url: url)
         request.setValue("StoryTimeUniverseiOS/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("image/avif,image/webp,image/apng,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 25
         request.cachePolicy = .returnCacheDataElseLoad
 
         do {
             let (data, response) = try await APIClient.shared.session.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
-                  let uiImage = UIImage(data: data)
-            else {
-                failed = true
-                image = nil
-                return
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                return nil
             }
-            ImageCache.shared.set(uiImage, for: url)
-            image = uiImage
-            failed = false
+            // Reject tiny/error payloads
+            guard data.count > 256, let uiImage = UIImage(data: data) else { return nil }
+            return uiImage
         } catch {
-            failed = true
-            image = nil
+            return nil
         }
     }
 }
@@ -88,11 +108,17 @@ final class ImageCache {
     static let shared = ImageCache()
     private let cache = NSCache<NSURL, UIImage>()
 
+    init() {
+        cache.countLimit = 300
+        cache.totalCostLimit = 80 * 1024 * 1024
+    }
+
     func image(for url: URL) -> UIImage? {
         cache.object(forKey: url as NSURL)
     }
 
     func set(_ image: UIImage, for url: URL) {
-        cache.setObject(image, forKey: url as NSURL)
+        let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
+        cache.setObject(image, forKey: url as NSURL, cost: cost)
     }
 }

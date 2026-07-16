@@ -66,10 +66,8 @@ struct HeroCard: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            RemoteImage(url: item.backdropURL ?? item.posterURL)
-                .scaledToFill()
+            RemoteImage(urls: item.backdropCandidates)
                 .frame(width: width - 24, height: height)
-                .clipped()
 
             LinearGradient(
                 colors: [.clear, .black.opacity(0.35), .black.opacity(0.92)],
@@ -187,10 +185,8 @@ struct ContinueWatchingRow: View {
                         Button { onSelect(item) } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 ZStack(alignment: .bottom) {
-                                    RemoteImage(url: item.posterURL ?? item.backdropURL)
-                                        .scaledToFill()
+                                    RemoteImage(urls: item.posterCandidates)
                                         .frame(width: 168, height: 96)
-                                        .clipped()
 
                                     ProgressView(value: item.progress)
                                         .tint(Theme.accent)
@@ -222,10 +218,8 @@ struct PosterCard: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            RemoteImage(url: item.posterURL ?? item.backdropURL)
-                .scaledToFill()
+            RemoteImage(urls: item.posterCandidates)
                 .frame(width: 118, height: 176)
-                .clipped()
 
             LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)
 

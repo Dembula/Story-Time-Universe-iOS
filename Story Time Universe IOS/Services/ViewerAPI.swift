@@ -73,7 +73,22 @@ actor ViewerAPI {
         if let category { query.append(URLQueryItem(name: "category", value: category)) }
         let (data, response) = try await api.request(path: "api/content", query: query)
         guard response.statusCode == 200 else { throw api.parseAPIError(data: data, status: response.statusCode) }
-        return try api.decode([ContentItem].self, from: data)
+        return Self.decodeContentList(data)
+    }
+
+    /// Decode catalogue items one-by-one so a single bad row cannot blank the whole UI.
+    nonisolated private static func decodeContentList(_ data: Data) -> [ContentItem] {
+        let decoder = JSONDecoder()
+        if let all = try? decoder.decode([ContentItem].self, from: data) {
+            return all
+        }
+        guard let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        return array.compactMap { row in
+            guard let rowData = try? JSONSerialization.data(withJSONObject: row) else { return nil }
+            return try? decoder.decode(ContentItem.self, from: rowData)
+        }
     }
 
     func fetchContinueWatching() async throws -> [ContinueWatchingItem] {

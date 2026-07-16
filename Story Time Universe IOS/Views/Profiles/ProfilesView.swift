@@ -12,122 +12,51 @@ struct ProfilesView: View {
     @State private var selectingId: String?
     @State private var showCreate = false
 
-    private let columns = [GridItem(.adaptive(minimum: 96, maximum: 112), spacing: 18)]
-
     var body: some View {
-        ZStack {
-            cyclingBackdrop
-                .ignoresSafeArea()
+        GeometryReader { geo in
+            let bottomHeight = min(max(geo.size.height * 0.42, 280), 360)
 
-            VStack(spacing: 0) {
-                HStack {
-                    Image("AppLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(height: 34)
-                        .shadow(color: Theme.accent.opacity(0.4), radius: 8)
-                    Spacer()
-                    Button("Sign Out") {
-                        Task { await appState.signOut() }
-                    }
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.85))
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
+            ZStack {
+                // Fixed-frame backdrop — never expands layout
+                cyclingBackdrop
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
 
-                Spacer(minLength: 12)
+                VStack(spacing: 0) {
+                    topBar
+                        .padding(.horizontal, 20)
+                        .padding(.top, 8)
 
-                if let item = currentBackdrop {
-                    VStack(spacing: 6) {
-                        Text(item.title.uppercased())
-                            .font(.system(size: 28, weight: .heavy))
-                            .foregroundStyle(.white)
-                            .multilineTextAlignment(.center)
-                            .shadow(radius: 8)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.7)
-                            .padding(.horizontal, 24)
-                        if let category = item.category, !category.isEmpty {
-                            Text(category)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                    }
-                    .padding(.bottom, 20)
-                }
+                    Spacer(minLength: 0)
 
-                VStack(spacing: 18) {
-                    Text("Choose your profile")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.92))
-
-                    if isLoading {
-                        ProgressView().tint(Theme.accent)
-                            .padding(.vertical, 24)
-                    } else if profiles.isEmpty {
-                        emptyState
-                    } else {
-                        LazyVGrid(columns: columns, spacing: 20) {
-                            ForEach(profiles) { profile in
-                                Button {
-                                    Task { await select(profile) }
-                                } label: {
-                                    ProfileAvatar(profile: profile, isLoading: selectingId == profile.id)
-                                }
-                                .disabled(selectingId != nil)
-                            }
-
-                            Button { showCreate = true } label: {
-                                VStack(spacing: 10) {
-                                    ZStack {
-                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                            .fill(Color.white.opacity(0.12))
-                                            .frame(width: 92, height: 92)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 16)
-                                                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                                            )
-                                        Image(systemName: "plus")
-                                            .font(.title)
-                                            .foregroundStyle(.white)
-                                    }
-                                    Text("Add")
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(.white.opacity(0.75))
-                                }
+                    if let item = currentBackdrop {
+                        VStack(spacing: 6) {
+                            Text(item.title.uppercased())
+                                .font(.system(size: 26, weight: .heavy))
+                                .foregroundStyle(.white)
+                                .multilineTextAlignment(.center)
+                                .shadow(color: .black.opacity(0.6), radius: 8)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.7)
+                                .padding(.horizontal, 24)
+                            if let category = item.category, !category.isEmpty {
+                                Text(category)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.white.opacity(0.85))
                             }
                         }
-                        .padding(.horizontal, 24)
+                        .padding(.bottom, 16)
                     }
 
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red.opacity(0.95))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                    }
-
-                    if appState.needsPaymentAttention {
-                        paymentBanner
-                            .padding(.horizontal, 20)
-                    }
+                    profilePanel
+                        .frame(height: bottomHeight)
                 }
-                .padding(.top, 18)
-                .padding(.bottom, 28)
-                .frame(maxWidth: .infinity)
-                .background(
-                    LinearGradient(
-                        colors: [.clear, .black.opacity(0.75), .black.opacity(0.96)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
             }
         }
+        .ignoresSafeArea(edges: .bottom)
+        .background(Theme.background.ignoresSafeArea())
         .task { await load() }
-        .task(id: backdropItems.count) { await cycleBackdrops() }
+        .task(id: backdropItems.map(\.id).joined()) { await cycleBackdrops() }
         .sheet(item: $pinProfile) { profile in
             PinEntrySheet(profileName: profile.name, pin: $pin) {
                 Task { await activate(profile, pin: pin) }
@@ -142,6 +71,101 @@ struct ProfilesView: View {
         }
     }
 
+    private var topBar: some View {
+        HStack {
+            Image("AppLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(height: 34)
+                .shadow(color: Theme.accent.opacity(0.4), radius: 8)
+            Spacer()
+            Button("Sign Out") {
+                Task { await appState.signOut() }
+            }
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.white.opacity(0.9))
+        }
+    }
+
+    private var profilePanel: some View {
+        VStack(spacing: 16) {
+            Text("Choose your profile")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.white)
+
+            if isLoading {
+                ProgressView()
+                    .tint(Theme.accent)
+                    .padding(.vertical, 20)
+            } else if profiles.isEmpty {
+                emptyState
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 18) {
+                        ForEach(profiles) { profile in
+                            Button {
+                                Task { await select(profile) }
+                            } label: {
+                                ProfileAvatar(profile: profile, isLoading: selectingId == profile.id)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(selectingId != nil)
+                        }
+
+                        Button { showCreate = true } label: {
+                            VStack(spacing: 10) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .fill(Color.white.opacity(0.12))
+                                        .frame(width: 92, height: 92)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 16)
+                                                .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                                        )
+                                    Image(systemName: "plus")
+                                        .font(.title)
+                                        .foregroundStyle(.white)
+                                }
+                                Text("Add")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.white.opacity(0.8))
+                                Text(" ")
+                                    .font(.caption2)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 24)
+                }
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.red.opacity(0.95))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+
+            if appState.needsPaymentAttention {
+                paymentBanner
+                    .padding(.horizontal, 20)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 20)
+        .padding(.bottom, 28)
+        .frame(maxWidth: .infinity)
+        .background(
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.82), .black],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+
     private var currentBackdrop: ContentItem? {
         guard !backdropItems.isEmpty else { return nil }
         return backdropItems[backdropIndex % backdropItems.count]
@@ -151,27 +175,30 @@ struct ProfilesView: View {
         ZStack {
             Theme.background
             if let item = currentBackdrop {
-                RemoteImage(url: item.backdropURL ?? item.posterURL)
-                    .scaledToFill()
+                RemoteImage(urls: item.backdropCandidates)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
                     .id(item.id)
                     .transition(.opacity)
+            } else {
+                LinearGradient(
+                    colors: [Theme.accent.opacity(0.25), .black],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
             }
             LinearGradient(
-                colors: [.black.opacity(0.25), .black.opacity(0.55), .black.opacity(0.92)],
+                colors: [.black.opacity(0.2), .black.opacity(0.45), .black.opacity(0.88)],
                 startPoint: .top,
                 endPoint: .bottom
             )
-            Theme.accent.opacity(0.08).blendMode(.overlay)
         }
-        .animation(.easeInOut(duration: 0.8), value: backdropIndex)
+        .animation(.easeInOut(duration: 0.75), value: backdropIndex)
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             Text("No profiles yet")
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(.white.opacity(0.75))
             Button("Create profile") { showCreate = true }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.accent)
@@ -180,7 +207,7 @@ struct ProfilesView: View {
     }
 
     private var paymentBanner: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Subscription needs attention")
                 .font(.headline)
                 .foregroundStyle(Theme.foreground)
@@ -197,29 +224,38 @@ struct ProfilesView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
         }
-        .padding(16)
+        .padding(14)
         .background(Theme.accentSoft)
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Theme.accent.opacity(0.35)))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.accent.opacity(0.35)))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
     private func load() async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+
+        // Profiles first — never blocked by catalogue failures
         do {
-            async let profilesReq = ViewerAPI.shared.fetchProfiles()
-            async let featuredReq = ViewerAPI.shared.fetchContent(featured: true, limit: 8)
-            async let trendingReq = ViewerAPI.shared.fetchContent(limit: 12)
-            let (loadedProfiles, featured, trending) = try await (profilesReq, featuredReq, trendingReq)
-            profiles = loadedProfiles
-            let combined = featured.isEmpty ? trending : featured
-            backdropItems = combined.filter { $0.backdropURL != nil || $0.posterURL != nil }
-            if backdropItems.isEmpty { backdropItems = combined }
-            appState.subscription = try? await ViewerAPI.shared.fetchSubscription()
+            profiles = try await ViewerAPI.shared.fetchProfiles()
         } catch {
             errorMessage = error.localizedDescription
+            profiles = []
         }
+
+        let featured = (try? await ViewerAPI.shared.fetchContent(featured: true, limit: 10)) ?? []
+        let trending = (try? await ViewerAPI.shared.fetchContent(limit: 16)) ?? []
+        let combined = featured.isEmpty ? trending : (featured + trending)
+        var seen = Set<String>()
+        backdropItems = combined.filter { item in
+            guard seen.insert(item.id).inserted else { return false }
+            return !item.backdropCandidates.isEmpty || !item.posterCandidates.isEmpty
+        }
+        if backdropItems.isEmpty {
+            backdropItems = Array(combined.prefix(8))
+        }
+        backdropIndex = 0
+        appState.subscription = try? await ViewerAPI.shared.fetchSubscription()
     }
 
     private func cycleBackdrops() async {
@@ -227,7 +263,7 @@ struct ProfilesView: View {
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             guard !Task.isCancelled, backdropItems.count > 1 else { return }
-            withAnimation(.easeInOut(duration: 0.8)) {
+            withAnimation(.easeInOut(duration: 0.75)) {
                 backdropIndex = (backdropIndex + 1) % backdropItems.count
             }
         }
@@ -278,7 +314,7 @@ struct ProfileAvatar: View {
                         )
                     )
                     .frame(width: 92, height: 92)
-                    .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+                    .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
                 if isLoading {
                     ProgressView().tint(.white)
                 } else {
@@ -304,6 +340,7 @@ struct ProfileAvatar: View {
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.65))
         }
+        .frame(width: 100)
     }
 }
 

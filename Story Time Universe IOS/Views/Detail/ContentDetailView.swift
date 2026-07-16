@@ -16,10 +16,15 @@ struct ContentDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .bottomLeading) {
-                    RemoteImage(url: detail?.backdropURL ?? seed?.backdropURL ?? detail?.posterURL ?? seed?.posterURL)
-                        .scaledToFill()
-                        .frame(height: 360)
-                        .clipped()
+                    RemoteImage(
+                        urls: detail?.backdropCandidates
+                            ?? seed?.backdropCandidates
+                            ?? detail?.posterCandidates
+                            ?? seed?.posterCandidates
+                            ?? []
+                    )
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 360)
 
                     LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
 
