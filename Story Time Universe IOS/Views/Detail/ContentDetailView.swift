@@ -28,8 +28,9 @@ struct ContentDetailView: View {
 
     private var synopsisText: String? {
         let raw = detail?.description ?? seed?.description
-        guard let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return Self.shorten(raw)
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     var body: some View {
@@ -123,12 +124,6 @@ struct ContentDetailView: View {
         playTrailer = trailer
         playerEpisodeId = episodeId
         showPlayer = true
-    }
-
-    private static func shorten(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.count <= 280 { return trimmed }
-        return String(trimmed.prefix(277)).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 
     private func load() async {
@@ -286,10 +281,7 @@ private struct DetailBodySections: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
             if let synopsis {
-                Text(synopsis)
-                    .font(.body)
-                    .foregroundStyle(Theme.muted)
-                    .lineSpacing(3)
+                DetailSynopsisView(text: synopsis)
             }
 
             if hasTrailer {
@@ -316,6 +308,50 @@ private struct DetailBodySections: View {
                 Text(errorMessage)
                     .font(.footnote)
                     .foregroundStyle(.red.opacity(0.9))
+            }
+        }
+    }
+}
+
+private struct DetailSynopsisView: View {
+    let text: String
+    @State private var expanded = false
+
+    private let previewLimit = 220
+
+    private var needsExpansion: Bool {
+        text.count > previewLimit
+    }
+
+    private var displayedText: String {
+        guard needsExpansion, !expanded else { return text }
+        let end = text.index(text.startIndex, offsetBy: previewLimit, limitedBy: text.endIndex) ?? text.endIndex
+        var snippet = String(text[..<end])
+        if let lastSpace = snippet.lastIndex(of: " ") {
+            snippet = String(snippet[..<lastSpace])
+        }
+        return snippet.trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(displayedText)
+                .font(.body)
+                .foregroundStyle(Theme.muted)
+                .lineSpacing(3)
+                .animation(.easeInOut(duration: 0.2), value: expanded)
+
+            if needsExpansion {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        expanded.toggle()
+                    }
+                } label: {
+                    Text(expanded ? "See less" : "See more")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(.plain)
             }
         }
     }
