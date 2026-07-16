@@ -1,25 +1,16 @@
 import SwiftUI
-import Playgrounds
 
-@main struct MyApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
-    }
-}
-
+/// Placeholder kept for the synchronized folder; app entry is `StoryTimeApp`.
 struct ContentView: View {
     var body: some View {
-        Text("Hello, world!")
-            .padding()
+        Text("Story Time Universe")
+            .foregroundStyle(Theme.foreground)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.background)
     }
 }
 
 #Preview {
     ContentView()
-}
-
-#Playground {
-    _ = 1 + 2
+        .preferredColorScheme(.dark)
 }

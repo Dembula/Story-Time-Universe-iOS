@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct StoryTimeApp: App {
+    @UIApplicationDelegateAdaptor(OrientationAppDelegate.self) private var appDelegate
     @StateObject private var appState = AppState()
 
     var body: some Scene {
@@ -9,7 +10,7 @@ struct StoryTimeApp: App {
             RootView()
                 .environmentObject(appState)
                 .preferredColorScheme(.dark)
-                .accentColor(Theme.accent)
+                .tint(Theme.accent)
         }
     }
 }
