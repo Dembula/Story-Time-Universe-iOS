@@ -175,7 +175,7 @@ struct ProfilesView: View {
         ZStack {
             Theme.background
             if let item = currentBackdrop {
-                RemoteImage(urls: item.backdropCandidates)
+                RemoteImage(urls: item.posterCandidates)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .id(item.id)
                     .transition(.opacity)
@@ -249,7 +249,7 @@ struct ProfilesView: View {
         var seen = Set<String>()
         backdropItems = combined.filter { item in
             guard seen.insert(item.id).inserted else { return false }
-            return !item.backdropCandidates.isEmpty || !item.posterCandidates.isEmpty
+            return !item.posterCandidates.isEmpty
         }
         if backdropItems.isEmpty {
             backdropItems = Array(combined.prefix(8))

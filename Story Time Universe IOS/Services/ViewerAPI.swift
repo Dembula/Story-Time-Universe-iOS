@@ -103,6 +103,36 @@ actor ViewerAPI {
         return try api.decode(ContentDetail.self, from: data)
     }
 
+    func fetchCrew(contentId: String) async throws -> [CrewCredit] {
+        let (data, response) = try await api.request(
+            path: "api/crew",
+            query: [URLQueryItem(name: "contentId", value: contentId)]
+        )
+        guard response.statusCode == 200 else { return [] }
+        return (try? api.decode([CrewCredit].self, from: data)) ?? []
+    }
+
+    func fetchRelated(excluding id: String, category: String?, type: String?, limit: Int = 12) async throws -> [ContentItem] {
+        var items: [ContentItem] = []
+        if let category, !category.isEmpty {
+            items = try await fetchContent(category: category, limit: limit + 4)
+        }
+        if items.count < 4, let type {
+            let byType = try await fetchContent(type: type, limit: limit + 4)
+            items.append(contentsOf: byType)
+        }
+        if items.isEmpty {
+            items = try await fetchContent(limit: limit + 4)
+        }
+        var seen = Set<String>()
+        return items.filter { item in
+            guard item.id != id else { return false }
+            return seen.insert(item.id).inserted
+        }
+        .prefix(limit)
+        .map { $0 }
+    }
+
     func fetchPlaybackBundle(contentId: String, episodeId: String? = nil, trailer: Bool = false) async throws -> PlaybackBundle {
         var query: [URLQueryItem] = []
         if let episodeId { query.append(URLQueryItem(name: "episodeId", value: episodeId)) }

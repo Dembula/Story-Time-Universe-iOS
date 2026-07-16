@@ -185,7 +185,7 @@ struct ContinueWatchingRow: View {
                         Button { onSelect(item) } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 ZStack(alignment: .bottom) {
-                                    RemoteImage(urls: item.posterCandidates)
+                                    RemoteImage(urls: item.backdropCandidates)
                                         .frame(width: 168, height: 96)
 
                                     ProgressView(value: item.progress)

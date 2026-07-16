@@ -6,6 +6,7 @@ struct PlayerContainerView: View {
     let contentId: String
     let title: String
     var episodeId: String?
+    var isTrailer: Bool = false
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = PlayerViewModel()
@@ -18,7 +19,7 @@ struct PlayerContainerView: View {
                 VideoPlayer(player: player)
                     .ignoresSafeArea()
             } else if model.isLoading {
-                ProgressView("Loading…")
+                ProgressView(isTrailer ? "Loading trailer…" : "Loading…")
                     .tint(Theme.accent)
                     .foregroundStyle(.white)
             } else if let error = model.errorMessage {
@@ -48,7 +49,7 @@ struct PlayerContainerView: View {
                             .clipShape(Circle())
                     }
                     Spacer()
-                    Text(title)
+                    Text(isTrailer ? "Trailer · \(title)" : title)
                         .font(.headline)
                         .foregroundStyle(.white)
                         .lineLimit(1)
@@ -64,7 +65,7 @@ struct PlayerContainerView: View {
         .persistentSystemOverlays(.hidden)
         .task {
             OrientationLock.lockLandscape()
-            await model.start(contentId: contentId, episodeId: episodeId)
+            await model.start(contentId: contentId, episodeId: episodeId, trailer: isTrailer)
         }
         .onDisappear {
             model.stop()
@@ -91,7 +92,7 @@ final class PlayerViewModel: ObservableObject {
     private var watchedSeconds: Double = 0
     private var lastSavedPosition: Double = 0
 
-    func start(contentId: String, episodeId: String?) async {
+    func start(contentId: String, episodeId: String?, trailer: Bool = false) async {
         self.contentId = contentId
         isLoading = true
         errorMessage = nil
@@ -100,26 +101,35 @@ final class PlayerViewModel: ObservableObject {
         do {
             let bundle = try await ViewerAPI.shared.fetchPlaybackBundle(
                 contentId: contentId,
-                episodeId: episodeId
+                episodeId: episodeId,
+                trailer: trailer
             )
             guard let url = bundle.streamURL else {
                 throw APIError.server("No playable stream was returned for this title.")
             }
 
-            let progress = try await ViewerAPI.shared.fetchWatchProgress(contentId: contentId)
+            let resumeAt: Int
+            if trailer {
+                resumeAt = 0
+            } else {
+                let progress = try await ViewerAPI.shared.fetchWatchProgress(contentId: contentId)
+                resumeAt = progress.position
+            }
             let asset = Self.authenticatedAsset(for: url)
             let item = AVPlayerItem(asset: asset)
             let avPlayer = AVPlayer(playerItem: item)
             avPlayer.automaticallyWaitsToMinimizeStalling = true
             self.player = avPlayer
 
-            if progress.position > 5 {
-                let time = CMTime(seconds: Double(progress.position), preferredTimescale: 600)
+            if !trailer, resumeAt > 5 {
+                let time = CMTime(seconds: Double(resumeAt), preferredTimescale: 600)
                 await avPlayer.seek(to: time)
             }
 
             avPlayer.play()
-            beginProgressReporting(player: avPlayer)
+            if !trailer {
+                beginProgressReporting(player: avPlayer)
+            }
 
             endObserver = NotificationCenter.default.addObserver(
                 forName: .AVPlayerItemDidPlayToEndTime,

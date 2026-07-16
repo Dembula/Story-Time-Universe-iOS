@@ -168,12 +168,14 @@ struct ContinueWatchingItem: Codable, Identifiable, Hashable {
         MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
     }
 
+    var backdropCandidates: [URL] {
+        let list = MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
+        return list.isEmpty ? posterCandidates : list
+    }
+
     var posterURL: URL? { posterCandidates.first }
 
-    var backdropURL: URL? {
-        MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true).first
-            ?? posterURL
-    }
+    var backdropURL: URL? { backdropCandidates.first ?? posterURL }
 
     var progress: Double {
         if let percent = progressPercent { return min(1, max(0, Double(percent) / 100)) }
@@ -233,6 +235,31 @@ struct Season: Codable, Hashable {
     var stableId: String { id ?? "season-\(seasonNumber ?? 0)" }
 }
 
+struct BtsVideo: Codable, Identifiable, Hashable {
+    let id: String
+    let title: String?
+    let videoUrl: String?
+    let thumbnail: String?
+
+    var thumbnailCandidates: [URL] {
+        MediaURL.candidates(posterUrl: thumbnail, backdropUrl: nil, videoUrl: videoUrl, preferBackdrop: false)
+    }
+}
+
+struct CrewCredit: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let role: String?
+    let bio: String?
+    let creditPersonId: String?
+
+    var initials: String {
+        let parts = name.split(separator: " ").prefix(2)
+        let chars = parts.compactMap(\.first)
+        return chars.isEmpty ? String(name.prefix(1)).uppercased() : String(chars).uppercased()
+    }
+}
+
 struct ContentDetail: Codable, Identifiable, Hashable {
     let id: String
     let title: String
@@ -246,9 +273,13 @@ struct ContentDetail: Codable, Identifiable, Hashable {
     let videoUrl: String?
     let duration: Int?
     let tags: String?
+    let language: String?
+    let country: String?
+    let ageRating: String?
     let creator: CreatorInfo?
     let ratingStats: RatingStats?
     let seasons: [Season]?
+    let btsVideos: [BtsVideo]?
 
     var posterCandidates: [URL] {
         MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
@@ -260,8 +291,20 @@ struct ContentDetail: Codable, Identifiable, Hashable {
     }
 
     var posterURL: URL? { posterCandidates.first }
-
     var backdropURL: URL? { backdropCandidates.first }
+
+    var hasTrailer: Bool {
+        guard let trailerUrl, !trailerUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return true
+    }
+
+    var runtimeLabel: String? {
+        guard let duration, duration > 0 else { return nil }
+        let hours = duration / 60
+        let mins = duration % 60
+        if hours > 0 { return "\(hours)h \(mins)m" }
+        return "\(mins) min"
+    }
 
     var asContentItem: ContentItem {
         ContentItem(
@@ -280,6 +323,54 @@ struct ContentDetail: Codable, Identifiable, Hashable {
             tags: tags,
             minAge: nil
         )
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, description, type, category, year
+        case posterUrl, backdropUrl, trailerUrl, videoUrl
+        case duration, tags, language, country, ageRating
+        case creator, ratingStats, seasons, btsVideos
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        type = try c.decodeIfPresent(String.self, forKey: .type)
+        category = try c.decodeIfPresent(String.self, forKey: .category)
+        if let y = try? c.decodeIfPresent(Int.self, forKey: .year) {
+            year = y
+        } else if let y = try? c.decodeIfPresent(Double.self, forKey: .year) {
+            year = Int(y)
+        } else {
+            year = nil
+        }
+        posterUrl = try c.decodeIfPresent(String.self, forKey: .posterUrl)
+        backdropUrl = try c.decodeIfPresent(String.self, forKey: .backdropUrl)
+        trailerUrl = try c.decodeIfPresent(String.self, forKey: .trailerUrl)
+        videoUrl = try c.decodeIfPresent(String.self, forKey: .videoUrl)
+        if let d = try? c.decodeIfPresent(Int.self, forKey: .duration) {
+            duration = d
+        } else if let d = try? c.decodeIfPresent(Double.self, forKey: .duration) {
+            duration = Int(d)
+        } else {
+            duration = nil
+        }
+        if let t = try? c.decodeIfPresent(String.self, forKey: .tags) {
+            tags = t
+        } else if let arr = try? c.decodeIfPresent([String].self, forKey: .tags) {
+            tags = arr.joined(separator: ", ")
+        } else {
+            tags = nil
+        }
+        language = try c.decodeIfPresent(String.self, forKey: .language)
+        country = try c.decodeIfPresent(String.self, forKey: .country)
+        ageRating = try c.decodeIfPresent(String.self, forKey: .ageRating)
+        creator = try c.decodeIfPresent(CreatorInfo.self, forKey: .creator)
+        ratingStats = try c.decodeIfPresent(RatingStats.self, forKey: .ratingStats)
+        seasons = try c.decodeIfPresent([Season].self, forKey: .seasons)
+        btsVideos = try c.decodeIfPresent([BtsVideo].self, forKey: .btsVideos)
     }
 }
 
