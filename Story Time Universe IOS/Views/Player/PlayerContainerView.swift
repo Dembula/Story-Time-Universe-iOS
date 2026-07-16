@@ -12,6 +12,10 @@ struct PlayerContainerView: View {
     @StateObject private var model = PlayerViewModel()
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
+    @State private var isLocked = false
+    @State private var brightness = Double(UIScreen.main.brightness)
+    @State private var seekFeedback: SeekFeedback?
+    @State private var seekFeedbackTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -21,15 +25,25 @@ struct PlayerContainerView: View {
                 PlayerLayerView(player: player)
                     .ignoresSafeArea()
 
-                Color.clear
-                    .contentShape(Rectangle())
-                    .ignoresSafeArea()
-                    .onTapGesture { toggleControls() }
+                seekTapLayer
 
-                controlsOverlay(player: player)
-                    .opacity(controlsVisible ? 1 : 0)
-                    .allowsHitTesting(controlsVisible)
-                    .animation(.easeInOut(duration: 0.25), value: controlsVisible)
+                if seekFeedback != nil {
+                    seekFeedbackOverlay
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+
+                if isLocked {
+                    lockedOverlay
+                        .opacity(controlsVisible ? 1 : 0)
+                        .allowsHitTesting(controlsVisible)
+                        .animation(.easeInOut(duration: 0.25), value: controlsVisible)
+                } else {
+                    controlsOverlay(player: player)
+                        .opacity(controlsVisible ? 1 : 0)
+                        .allowsHitTesting(controlsVisible)
+                        .animation(.easeInOut(duration: 0.25), value: controlsVisible)
+                }
             } else if model.isLoading {
                 ProgressView(isTrailer ? "Loading trailer…" : "Loading…")
                     .tint(Theme.accent)
@@ -71,6 +85,62 @@ struct PlayerContainerView: View {
         }
     }
 
+    private var seekTapLayer: some View {
+        HStack(spacing: 0) {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { doubleTapSeek(by: -10) }
+                .onTapGesture { toggleControls() }
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { doubleTapSeek(by: 10) }
+                .onTapGesture { toggleControls() }
+        }
+        .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private var seekFeedbackOverlay: some View {
+        if let feedback = seekFeedback {
+            HStack {
+                if feedback.isForward { Spacer() }
+                VStack(spacing: 6) {
+                    Image(systemName: feedback.isForward ? "goforward.10" : "gobackward.10")
+                        .font(.system(size: 40, weight: .semibold))
+                    Text("\(abs(Int(feedback.total)))s")
+                        .font(.subheadline.monospacedDigit().weight(.semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(28)
+                .background(.ultraThinMaterial, in: Circle())
+                .padding(.horizontal, 48)
+                if !feedback.isForward { Spacer() }
+            }
+        }
+    }
+
+    private var lockedOverlay: some View {
+        VStack {
+            HStack {
+                Spacer()
+                Button {
+                    isLocked = false
+                    showControls(persistent: !model.isPlaying)
+                } label: {
+                    Image(systemName: "lock.fill")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(14)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Circle())
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            Spacer()
+        }
+    }
+
     @ViewBuilder
     private func controlsOverlay(player: AVPlayer) -> some View {
         ZStack {
@@ -80,8 +150,7 @@ struct PlayerContainerView: View {
                 endPoint: .bottom
             )
             .ignoresSafeArea()
-            .contentShape(Rectangle())
-            .onTapGesture { toggleControls() }
+            .allowsHitTesting(false)
 
             VStack {
                 HStack {
@@ -100,22 +169,48 @@ struct PlayerContainerView: View {
                         .lineLimit(1)
                         .shadow(radius: 4)
                     Spacer()
-                    Color.clear.frame(width: 40, height: 40)
+                    Button {
+                        isLocked = true
+                        showControls(persistent: false)
+                    } label: {
+                        Image(systemName: "lock.open")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(12)
+                            .background(.ultraThinMaterial)
+                            .clipShape(Circle())
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
 
                 Spacer()
 
-                Button {
-                    model.togglePlayPause()
-                    showControls(persistent: !model.isPlaying)
-                } label: {
-                    Image(systemName: model.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 64))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(.white)
-                        .shadow(radius: 8)
+                HStack(spacing: 48) {
+                    Button { doubleTapSeek(by: -10) } label: {
+                        Image(systemName: "gobackward.10")
+                            .font(.system(size: 34, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .shadow(radius: 6)
+                    }
+
+                    Button {
+                        model.togglePlayPause()
+                        showControls(persistent: !model.isPlaying)
+                    } label: {
+                        Image(systemName: model.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 64))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(.white)
+                            .shadow(radius: 8)
+                    }
+
+                    Button { doubleTapSeek(by: 10) } label: {
+                        Image(systemName: "goforward.10")
+                            .font(.system(size: 34, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .shadow(radius: 6)
+                    }
                 }
 
                 Spacer()
@@ -123,6 +218,33 @@ struct PlayerContainerView: View {
                 PlayerProgressBar(player: player)
                     .padding(.horizontal, 24)
                     .padding(.bottom, 28)
+            }
+
+            HStack {
+                BrightnessSlider(brightness: $brightness)
+                    .padding(.leading, 20)
+                    .onChange(of: brightness) { _, newValue in
+                        UIScreen.main.brightness = CGFloat(newValue)
+                        showControls(persistent: !model.isPlaying)
+                    }
+                Spacer()
+            }
+        }
+    }
+
+    private func doubleTapSeek(by delta: Double) {
+        guard !isLocked else { return }
+        model.seek(by: delta)
+        let total = (seekFeedback?.isForward == (delta > 0)) ? (seekFeedback?.total ?? 0) + delta : delta
+        withAnimation(.easeInOut(duration: 0.15)) {
+            seekFeedback = SeekFeedback(isForward: delta > 0, total: total)
+        }
+        seekFeedbackTask?.cancel()
+        seekFeedbackTask = Task {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) { seekFeedback = nil }
             }
         }
     }
@@ -132,7 +254,7 @@ struct PlayerContainerView: View {
             controlsVisible = false
             hideTask?.cancel()
         } else {
-            showControls(persistent: !model.isPlaying)
+            showControls(persistent: !isLocked && !model.isPlaying)
         }
     }
 
@@ -146,12 +268,12 @@ struct PlayerContainerView: View {
 
     private func scheduleHideControls() {
         hideTask?.cancel()
-        guard model.isPlaying else { return }
+        guard isLocked || model.isPlaying else { return }
         hideTask = Task {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                if model.isPlaying {
+                if isLocked || model.isPlaying {
                     controlsVisible = false
                 }
             }
@@ -164,6 +286,54 @@ struct PlayerContainerView: View {
         OrientationLock.unlockPortrait()
         dismiss()
     }
+}
+
+private struct SeekFeedback: Equatable {
+    let isForward: Bool
+    let total: Double
+}
+
+private struct BrightnessSlider: View {
+    @Binding var brightness: Double
+
+    private let trackHeight: CGFloat = 160
+    private let trackWidth: CGFloat = 6
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "sun.max.fill")
+                .font(.caption)
+                .foregroundStyle(.white)
+
+            ZStack(alignment: .bottom) {
+                Capsule()
+                    .fill(.white.opacity(0.25))
+                    .frame(width: trackWidth, height: trackHeight)
+                Capsule()
+                    .fill(Theme.accent)
+                    .frame(width: trackWidth, height: trackHeight * CGFloat(clamped))
+            }
+            .frame(width: 36, height: trackHeight)
+            .contentShape(Rectangle())
+            .background(.ultraThinMaterial, in: Capsule())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let ratio = 1 - (value.location.y / trackHeight)
+                        brightness = min(1, max(0, Double(ratio)))
+                    }
+            )
+
+            Image(systemName: "sun.min.fill")
+                .font(.caption)
+                .foregroundStyle(.white)
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 6)
+        .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var clamped: Double { min(1, max(0, brightness)) }
 }
 
 private struct PlayerLayerView: UIViewControllerRepresentable {
@@ -315,6 +485,19 @@ final class PlayerViewModel: ObservableObject {
             player.play()
             isPlaying = true
         }
+    }
+
+    func seek(by delta: Double) {
+        guard let player else { return }
+        let currentSeconds = player.currentTime().seconds
+        guard currentSeconds.isFinite else { return }
+        var target = currentSeconds + delta
+        target = max(0, target)
+        if let duration = player.currentItem?.duration.seconds, duration.isFinite {
+            target = min(target, duration)
+        }
+        let time = CMTime(seconds: target, preferredTimescale: 600)
+        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
     func stop() {
