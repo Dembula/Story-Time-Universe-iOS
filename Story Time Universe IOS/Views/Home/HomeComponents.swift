@@ -7,22 +7,51 @@ struct HeroCarousel: View {
     var onOpen: (ContentItem) -> Void
 
     var body: some View {
-        VStack(spacing: 14) {
-            TabView(selection: $index) {
-                ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
-                    HeroCard(item: item, onPlay: { onPlay(item) }, onOpen: { onOpen(item) })
+        GeometryReader { geo in
+            let width = geo.size.width
+            let height = min(width * 1.15, 480)
+
+            VStack(spacing: 12) {
+                TabView(selection: $index) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
+                        HeroCard(
+                            item: item,
+                            width: width,
+                            height: height,
+                            onPlay: { onPlay(item) },
+                            onOpen: { onOpen(item) }
+                        )
                         .tag(idx)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(width: width, height: height)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .padding(.horizontal, 12)
+
+                HStack(spacing: 6) {
+                    ForEach(items.indices, id: \.self) { i in
+                        Capsule()
+                            .fill(i == index ? Theme.accent : Color.white.opacity(0.28))
+                            .frame(width: i == index ? 18 : 6, height: 6)
+                    }
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: 420)
+            .frame(width: width, height: height + 24)
+        }
+        .frame(height: min(UIScreen.main.bounds.width * 1.15, 480) + 24)
+        .task(id: items.count) {
+            await autoCycle()
+        }
+    }
 
-            HStack(spacing: 6) {
-                ForEach(items.indices, id: \.self) { i in
-                    Capsule()
-                        .fill(i == index ? Theme.accent : Color.white.opacity(0.25))
-                        .frame(width: i == index ? 18 : 6, height: 6)
-                }
+    private func autoCycle() async {
+        guard items.count > 1 else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, items.count > 1 else { return }
+            withAnimation(.easeInOut(duration: 0.45)) {
+                index = (index + 1) % items.count
             }
         }
     }
@@ -30,6 +59,8 @@ struct HeroCarousel: View {
 
 struct HeroCard: View {
     let item: ContentItem
+    var width: CGFloat
+    var height: CGFloat
     var onPlay: () -> Void
     var onOpen: () -> Void
 
@@ -37,34 +68,39 @@ struct HeroCard: View {
         ZStack(alignment: .bottom) {
             RemoteImage(url: item.backdropURL ?? item.posterURL)
                 .scaledToFill()
-                .frame(maxWidth: .infinity)
-                .frame(height: 420)
+                .frame(width: width - 24, height: height)
                 .clipped()
 
             LinearGradient(
-                colors: [.clear, .black.opacity(0.55), .black],
+                colors: [.clear, .black.opacity(0.35), .black.opacity(0.92)],
                 startPoint: .top,
                 endPoint: .bottom
             )
 
-            VStack(alignment: .leading, spacing: 12) {
-                if item.featured == true {
-                    Text("Featured")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Capsule())
-                }
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Featured")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
 
-                Text(item.title.uppercased())
-                    .font(.system(size: 34, weight: .heavy))
+                Text(item.title)
+                    .font(.system(size: 30, weight: .heavy))
                     .foregroundStyle(.white)
                     .lineLimit(2)
+                    .minimumScaleFactor(0.65)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                Text([item.displayType, item.category].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " • "))
-                    .font(.footnote)
-                    .foregroundStyle(Theme.muted)
+                Text(
+                    [item.displayType, item.category]
+                        .compactMap { $0 }
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " • ")
+                )
+                .font(.footnote)
+                .foregroundStyle(Theme.muted)
+                .lineLimit(1)
 
                 HStack(spacing: 12) {
                     Button(action: onPlay) {
@@ -72,7 +108,7 @@ struct HeroCard: View {
                             .font(.headline)
                             .foregroundStyle(Theme.playButtonForeground)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
+                            .padding(.vertical, 13)
                             .background(Theme.playButton)
                             .clipShape(Capsule())
                     }
@@ -81,17 +117,19 @@ struct HeroCard: View {
                         Image(systemName: "plus")
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(.white)
-                            .frame(width: 48, height: 48)
-                            .background(Color.white.opacity(0.15))
+                            .frame(width: 46, height: 46)
+                            .background(Color.white.opacity(0.16))
                             .clipShape(Circle())
                     }
                     .accessibilityLabel("More info")
                 }
             }
-            .padding(20)
+            .padding(.horizontal, 18)
+            .padding(.bottom, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .padding(.horizontal, 16)
+        .frame(width: width - 24, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
@@ -112,7 +150,10 @@ struct ContentRowView: View {
                     HStack(spacing: 12) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
                             Button { onSelect(item) } label: {
-                                PosterCard(item: item, rank: title.lowercased().contains("top") || title.lowercased().contains("trending") ? idx + 1 : nil)
+                                PosterCard(
+                                    item: item,
+                                    rank: title.lowercased().contains("trending") ? idx + 1 : nil
+                                )
                             }
                             .buttonStyle(.plain)
                         }
@@ -130,7 +171,7 @@ struct ContinueWatchingRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            HStack(spacing: 4) {
                 Text("Continue Watching")
                     .font(.title3.bold())
                     .foregroundStyle(Theme.foreground)
@@ -146,9 +187,9 @@ struct ContinueWatchingRow: View {
                         Button { onSelect(item) } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 ZStack(alignment: .bottom) {
-                                    RemoteImage(url: item.posterURL)
+                                    RemoteImage(url: item.posterURL ?? item.backdropURL)
                                         .scaledToFill()
-                                        .frame(width: 160, height: 96)
+                                        .frame(width: 168, height: 96)
                                         .clipped()
 
                                     ProgressView(value: item.progress)
@@ -156,14 +197,14 @@ struct ContinueWatchingRow: View {
                                         .padding(.horizontal, 4)
                                         .padding(.bottom, 4)
                                 }
-                                .frame(width: 160, height: 96)
+                                .frame(width: 168, height: 96)
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                                 Text(item.title)
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(Theme.foreground)
                                     .lineLimit(1)
-                                    .frame(width: 160, alignment: .leading)
+                                    .frame(width: 168, alignment: .leading)
                             }
                         }
                         .buttonStyle(.plain)
@@ -181,19 +222,19 @@ struct PosterCard: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            RemoteImage(url: item.posterURL)
+            RemoteImage(url: item.posterURL ?? item.backdropURL)
                 .scaledToFill()
                 .frame(width: 118, height: 176)
                 .clipped()
 
-            LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .center, endPoint: .bottom)
+            LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.white)
                     .lineLimit(2)
-                if let category = item.category {
+                if let category = item.category, !category.isEmpty {
                     Text(category)
                         .font(.caption2)
                         .foregroundStyle(Theme.muted)
@@ -204,10 +245,10 @@ struct PosterCard: View {
 
             if let rank {
                 Text("\(rank)")
-                    .font(.system(size: 54, weight: .black))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .font(.system(size: 52, weight: .black))
+                    .foregroundStyle(.white.opacity(0.92))
                     .shadow(radius: 4)
-                    .offset(x: -8, y: -40)
+                    .offset(x: -6, y: -36)
             }
         }
         .frame(width: 118, height: 176)

@@ -85,6 +85,9 @@ struct ContentDetailView: View {
                 title: detail?.title ?? seed?.title ?? "Now Playing",
                 episodeId: playerEpisodeId
             )
+            .onDisappear {
+                OrientationLock.unlockPortrait()
+            }
         }
     }
 

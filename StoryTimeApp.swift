@@ -11,6 +11,9 @@ struct StoryTimeApp: App {
                 .environmentObject(appState)
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
+                .onAppear {
+                    OrientationLock.unlockPortrait()
+                }
         }
     }
 }

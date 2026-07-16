@@ -3,6 +3,8 @@ import SwiftUI
 struct ProfilesView: View {
     @EnvironmentObject private var appState: AppState
     @State private var profiles: [ViewerProfile] = []
+    @State private var backdropItems: [ContentItem] = []
+    @State private var backdropIndex = 0
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var pinProfile: ViewerProfile?
@@ -10,96 +12,122 @@ struct ProfilesView: View {
     @State private var selectingId: String?
     @State private var showCreate = false
 
-    private let columns = [GridItem(.adaptive(minimum: 100, maximum: 120), spacing: 20)]
+    private let columns = [GridItem(.adaptive(minimum: 96, maximum: 112), spacing: 18)]
 
     var body: some View {
         ZStack {
-            Theme.background.ignoresSafeArea()
-
-            LinearGradient(
-                colors: [Theme.accent.opacity(0.18), .clear, .black],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+            cyclingBackdrop
+                .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 HStack {
                     Image("AppLogo")
                         .resizable()
                         .scaledToFit()
-                        .frame(height: 36)
+                        .frame(height: 34)
+                        .shadow(color: Theme.accent.opacity(0.4), radius: 8)
                     Spacer()
                     Button("Sign Out") {
                         Task { await appState.signOut() }
                     }
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Theme.muted)
+                    .foregroundStyle(.white.opacity(0.85))
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 12)
+                .padding(.top, 8)
 
-                Spacer(minLength: 24)
+                Spacer(minLength: 12)
 
-                Text("Choose your profile")
-                    .font(.title2.bold())
-                    .foregroundStyle(Theme.foreground)
-                    .padding(.bottom, 28)
-
-                if isLoading {
-                    ProgressView().tint(Theme.accent)
-                } else if profiles.isEmpty {
-                    emptyState
-                } else {
-                    LazyVGrid(columns: columns, spacing: 24) {
-                        ForEach(profiles) { profile in
-                            Button {
-                                Task { await select(profile) }
-                            } label: {
-                                ProfileAvatar(profile: profile, isLoading: selectingId == profile.id)
-                            }
-                            .disabled(selectingId != nil)
-                        }
-
-                        Button {
-                            showCreate = true
-                        } label: {
-                            VStack(spacing: 10) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                        .fill(Color.white.opacity(0.08))
-                                        .frame(width: 96, height: 96)
-                                    Image(systemName: "plus")
-                                        .font(.title)
-                                        .foregroundStyle(Theme.foreground)
-                                }
-                                Text("Add")
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(Theme.muted)
-                            }
+                if let item = currentBackdrop {
+                    VStack(spacing: 6) {
+                        Text(item.title.uppercased())
+                            .font(.system(size: 28, weight: .heavy))
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.center)
+                            .shadow(radius: 8)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.7)
+                            .padding(.horizontal, 24)
+                        if let category = item.category, !category.isEmpty {
+                            Text(category)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.white.opacity(0.8))
                         }
                     }
-                    .padding(.horizontal, 28)
+                    .padding(.bottom, 20)
                 }
 
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.red.opacity(0.9))
-                        .multilineTextAlignment(.center)
-                        .padding()
-                }
+                VStack(spacing: 18) {
+                    Text("Choose your profile")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.92))
 
-                if appState.needsPaymentAttention {
-                    paymentBanner
-                        .padding(.horizontal, 20)
-                        .padding(.top, 24)
-                }
+                    if isLoading {
+                        ProgressView().tint(Theme.accent)
+                            .padding(.vertical, 24)
+                    } else if profiles.isEmpty {
+                        emptyState
+                    } else {
+                        LazyVGrid(columns: columns, spacing: 20) {
+                            ForEach(profiles) { profile in
+                                Button {
+                                    Task { await select(profile) }
+                                } label: {
+                                    ProfileAvatar(profile: profile, isLoading: selectingId == profile.id)
+                                }
+                                .disabled(selectingId != nil)
+                            }
 
-                Spacer()
+                            Button { showCreate = true } label: {
+                                VStack(spacing: 10) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .fill(Color.white.opacity(0.12))
+                                            .frame(width: 92, height: 92)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 16)
+                                                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                                            )
+                                        Image(systemName: "plus")
+                                            .font(.title)
+                                            .foregroundStyle(.white)
+                                    }
+                                    Text("Add")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(.white.opacity(0.75))
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                    }
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.red.opacity(0.95))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+
+                    if appState.needsPaymentAttention {
+                        paymentBanner
+                            .padding(.horizontal, 20)
+                    }
+                }
+                .padding(.top, 18)
+                .padding(.bottom, 28)
+                .frame(maxWidth: .infinity)
+                .background(
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.75), .black.opacity(0.96)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
             }
         }
         .task { await load() }
+        .task(id: backdropItems.count) { await cycleBackdrops() }
         .sheet(item: $pinProfile) { profile in
             PinEntrySheet(profileName: profile.name, pin: $pin) {
                 Task { await activate(profile, pin: pin) }
@@ -114,10 +142,36 @@ struct ProfilesView: View {
         }
     }
 
+    private var currentBackdrop: ContentItem? {
+        guard !backdropItems.isEmpty else { return nil }
+        return backdropItems[backdropIndex % backdropItems.count]
+    }
+
+    private var cyclingBackdrop: some View {
+        ZStack {
+            Theme.background
+            if let item = currentBackdrop {
+                RemoteImage(url: item.backdropURL ?? item.posterURL)
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                    .id(item.id)
+                    .transition(.opacity)
+            }
+            LinearGradient(
+                colors: [.black.opacity(0.25), .black.opacity(0.55), .black.opacity(0.92)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            Theme.accent.opacity(0.08).blendMode(.overlay)
+        }
+        .animation(.easeInOut(duration: 0.8), value: backdropIndex)
+    }
+
     private var emptyState: some View {
         VStack(spacing: 16) {
             Text("No profiles yet")
-                .foregroundStyle(Theme.muted)
+                .foregroundStyle(.white.opacity(0.7))
             Button("Create profile") { showCreate = true }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.accent)
@@ -154,10 +208,28 @@ struct ProfilesView: View {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            profiles = try await ViewerAPI.shared.fetchProfiles()
+            async let profilesReq = ViewerAPI.shared.fetchProfiles()
+            async let featuredReq = ViewerAPI.shared.fetchContent(featured: true, limit: 8)
+            async let trendingReq = ViewerAPI.shared.fetchContent(limit: 12)
+            let (loadedProfiles, featured, trending) = try await (profilesReq, featuredReq, trendingReq)
+            profiles = loadedProfiles
+            let combined = featured.isEmpty ? trending : featured
+            backdropItems = combined.filter { $0.backdropURL != nil || $0.posterURL != nil }
+            if backdropItems.isEmpty { backdropItems = combined }
             appState.subscription = try? await ViewerAPI.shared.fetchSubscription()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func cycleBackdrops() async {
+        guard backdropItems.count > 1 else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, backdropItems.count > 1 else { return }
+            withAnimation(.easeInOut(duration: 0.8)) {
+                backdropIndex = (backdropIndex + 1) % backdropItems.count
+            }
         }
     }
 
@@ -178,17 +250,11 @@ struct ProfilesView: View {
             let active = try await ViewerAPI.shared.activateProfile(id: profile.id, pin: pin)
             pinProfile = nil
             appState.selectProfile(active)
-        } catch let error as APIError {
-            if case .paymentRequired = error {
-                errorMessage = error.localizedDescription
-                pinProfile = nil
-            } else if profile.pinEnabled == true {
-                errorMessage = error.localizedDescription
-            } else {
-                errorMessage = error.localizedDescription
-            }
         } catch {
             errorMessage = error.localizedDescription
+            if let apiError = error as? APIError, case .paymentRequired = apiError {
+                pinProfile = nil
+            }
         }
     }
 }
@@ -205,18 +271,19 @@ struct ProfileAvatar: View {
                         LinearGradient(
                             colors: [
                                 Theme.profileColor(for: profile.id),
-                                Theme.profileColor(for: profile.id).opacity(0.7),
+                                Theme.profileColor(for: profile.id).opacity(0.65),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
-                    .frame(width: 96, height: 96)
+                    .frame(width: 92, height: 92)
+                    .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
                 if isLoading {
                     ProgressView().tint(.white)
                 } else {
                     Text(String(profile.name.prefix(1)).uppercased())
-                        .font(.system(size: 36, weight: .bold))
+                        .font(.system(size: 34, weight: .bold))
                         .foregroundStyle(.white)
                 }
                 if profile.pinEnabled == true {
@@ -230,12 +297,12 @@ struct ProfileAvatar: View {
                 }
             }
             Text(profile.name)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(Theme.foreground)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
                 .lineLimit(1)
             Text(profile.ageLabel)
                 .font(.caption2)
-                .foregroundStyle(Theme.muted)
+                .foregroundStyle(.white.opacity(0.65))
         }
     }
 }

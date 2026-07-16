@@ -20,10 +20,14 @@ final class AppState: ObservableObject {
 
     /// Always land on profiles after auth — never auto-enter last profile on launch.
     func bootstrap() async {
+        OrientationLock.unlockPortrait()
         route = .loading
         bootstrapError = nil
         APIClient.shared.setViewerProfileCookie(nil)
         activeProfile = nil
+
+        // Brief branded splash so launch doesn't flash blank.
+        try? await Task.sleep(nanoseconds: 700_000_000)
 
         do {
             let session = try await AuthService.shared.fetchSession()
@@ -72,7 +76,7 @@ final class AppState: ObservableObject {
     func switchProfile() {
         activeProfile = nil
         APIClient.shared.setViewerProfileCookie(nil)
-        OrientationLock.unlockAll()
+        OrientationLock.unlockPortrait()
         route = .profiles
     }
 

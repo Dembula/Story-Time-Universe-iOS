@@ -68,13 +68,13 @@ struct PlayerContainerView: View {
         }
         .onDisappear {
             model.stop()
-            OrientationLock.unlockAll()
+            OrientationLock.unlockPortrait()
         }
     }
 
     private func close() {
         model.stop()
-        OrientationLock.unlockAll()
+        OrientationLock.unlockPortrait()
         dismiss()
     }
 }

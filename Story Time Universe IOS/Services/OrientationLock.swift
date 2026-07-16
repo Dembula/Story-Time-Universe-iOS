@@ -1,33 +1,39 @@
 import UIKit
 
-/// Locks interface orientation while the Netflix-style player is presented.
+/// Portrait everywhere except during playback (landscape-only then).
 enum OrientationLock {
-    private(set) static var allowed: UIInterfaceOrientationMask = .allButUpsideDown
+    private(set) static var allowed: UIInterfaceOrientationMask = .portrait
 
     static func lockLandscape() {
         allowed = .landscape
-        apply(orientation: .landscapeRight)
+        force(orientation: .landscapeRight)
     }
 
-    static func unlockAll() {
-        allowed = .allButUpsideDown
-        apply(orientation: .portrait)
+    /// Restore portrait after leaving the player.
+    static func unlockPortrait() {
+        allowed = .portrait
+        force(orientation: .portrait)
     }
 
-    private static func apply(orientation: UIInterfaceOrientation) {
+    private static func force(orientation: UIInterfaceOrientation) {
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first
         else { return }
 
         if #available(iOS 16.0, *) {
-            let pref = UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: allowed)
+            let mask: UIInterfaceOrientationMask = orientation == .portrait ? .portrait : .landscape
+            let pref = UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: mask)
             scene.requestGeometryUpdate(pref) { _ in }
-            scene.windows.forEach { $0.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations() }
-        } else {
-            UIDevice.current.setValue(orientation.rawValue, forKey: "orientation")
             UIViewController.attemptRotationToDeviceOrientation()
+            scene.windows.forEach { window in
+                window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+            }
         }
+
+        // Nudge the device orientation key so iOS completes the rotation.
+        UIDevice.current.setValue(orientation.rawValue, forKey: "orientation")
+        UIViewController.attemptRotationToDeviceOrientation()
     }
 }
 

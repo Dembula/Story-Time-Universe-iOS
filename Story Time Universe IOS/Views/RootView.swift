@@ -12,27 +12,18 @@ struct RootView: View {
                 LaunchSplashView()
             case .signIn:
                 SignInView()
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             case .profiles:
                 ProfilesView()
+                    .transition(.opacity)
             case .main:
                 MainTabView()
+                    .transition(.opacity)
             }
         }
+        .animation(.easeInOut(duration: 0.35), value: appState.route)
         .task {
             await appState.bootstrap()
-        }
-    }
-}
-
-struct LaunchSplashView: View {
-    var body: some View {
-        VStack(spacing: 24) {
-            Image("AppLogo")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 160, height: 160)
-            ProgressView()
-                .tint(Theme.accent)
         }
     }
 }

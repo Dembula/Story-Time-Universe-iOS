@@ -62,16 +62,17 @@ struct ContentItem: Codable, Identifiable, Hashable {
         (type ?? "TITLE").replacingOccurrences(of: "_", with: " ").capitalized
     }
 
-    var posterURL: URL? { Self.makeURL(posterUrl) }
-    var backdropURL: URL? { Self.makeURL(backdropUrl) ?? posterURL }
+    var posterURL: URL? {
+        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
+    }
+
+    var backdropURL: URL? {
+        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
+            ?? posterURL
+    }
 
     static func makeURL(_ raw: String?) -> URL? {
-        guard let raw, !raw.isEmpty else { return nil }
-        if raw.hasPrefix("http") { return URL(string: raw) }
-        if raw.hasPrefix("/") {
-            return URL(string: raw, relativeTo: AppConfig.apiBaseURL)?.absoluteURL
-        }
-        return URL(string: raw)
+        MediaURL.httpURL(from: raw) ?? MediaURL.previewProxyURL(from: raw)
     }
 }
 
@@ -83,13 +84,20 @@ struct ContinueWatchingItem: Codable, Identifiable, Hashable {
     let category: String?
     let posterUrl: String?
     let backdropUrl: String?
+    let videoUrl: String?
     let duration: Int?
     let positionSeconds: Int?
     let durationSeconds: Int?
     let progressPercent: Int?
 
-    var posterURL: URL? { ContentItem.makeURL(posterUrl) }
-    var backdropURL: URL? { ContentItem.makeURL(backdropUrl) ?? posterURL }
+    var posterURL: URL? {
+        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
+    }
+
+    var backdropURL: URL? {
+        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
+            ?? posterURL
+    }
 
     var progress: Double {
         if let percent = progressPercent { return min(1, max(0, Double(percent) / 100)) }
@@ -110,7 +118,7 @@ struct ContinueWatchingItem: Codable, Identifiable, Hashable {
             posterUrl: posterUrl,
             backdropUrl: backdropUrl,
             trailerUrl: nil,
-            videoUrl: nil,
+            videoUrl: videoUrl,
             duration: durationSeconds ?? duration,
             featured: nil,
             tags: nil,
@@ -166,8 +174,14 @@ struct ContentDetail: Codable, Identifiable, Hashable {
     let ratingStats: RatingStats?
     let seasons: [Season]?
 
-    var posterURL: URL? { ContentItem.makeURL(posterUrl) }
-    var backdropURL: URL? { ContentItem.makeURL(backdropUrl) ?? posterURL }
+    var posterURL: URL? {
+        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
+    }
+
+    var backdropURL: URL? {
+        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
+            ?? posterURL
+    }
 
     var asContentItem: ContentItem {
         ContentItem(
@@ -236,7 +250,9 @@ struct SearchResult: Codable, Identifiable, Hashable {
     let posterUrl: String?
     let creatorName: String?
 
-    var posterURL: URL? { ContentItem.makeURL(posterUrl) }
+    var posterURL: URL? {
+        MediaURL.resolve(posterUrl: posterUrl, backdropUrl: nil, videoUrl: nil, preferBackdrop: false)
+    }
 
     var asContentItem: ContentItem {
         ContentItem(

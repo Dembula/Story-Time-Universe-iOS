@@ -10,6 +10,8 @@ enum AppConfig {
     static let changePlanURL = webBaseURL.appendingPathComponent("browse/account/change-plan")
     static let packageOnboardingURL = webBaseURL.appendingPathComponent("onboarding/package")
     static let signUpURL = webBaseURL.appendingPathComponent("auth/signup")
+    /// Viewer sign-up landing (terms gate when required).
+    static let viewerSignUpURL = URL(string: "https://story-time.online/auth/signup")!
 
     static let viewerProfileCookieName = "st_viewer_profile"
     static let viewerProfileUnlockCookieName = "st_viewer_profile_unlock"
