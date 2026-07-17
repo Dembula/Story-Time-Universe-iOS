@@ -245,7 +245,7 @@ struct PosterCard: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            RemoteImage(urls: item.posterCandidates)
+            RemoteImage(urls: item.posterCandidates, preferPortrait: true)
                 .frame(width: 118, height: 176)
 
             LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)

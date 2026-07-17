@@ -175,7 +175,7 @@ struct ProfilesView: View {
         ZStack {
             Theme.background
             if let item = currentBackdrop {
-                RemoteImage(urls: item.posterCandidates)
+                RemoteImage(urls: item.posterCandidates, preferPortrait: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .id(item.id)
                     .transition(.opacity)

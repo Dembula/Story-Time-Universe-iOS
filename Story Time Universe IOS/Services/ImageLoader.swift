@@ -26,28 +26,46 @@ actor ImageLoader {
     }
 
     /// Try candidates in order; memory/disk hits win immediately. Caps work for speed.
-    func loadFirst(of urls: [URL]) async -> UIImage? {
+    /// When `preferPortrait` is true, skip clearly landscape frames if a later candidate may be better
+    /// (stops video stills / backdrops filling tall poster cards).
+    func loadFirst(of urls: [URL], preferPortrait: Bool = false) async -> UIImage? {
         let candidates = Array(urls.prefix(4))
         guard !candidates.isEmpty else { return nil }
 
-        for url in candidates {
-            if let cached = await ImageCache.shared.image(for: url) {
-                return cached
-            }
-        }
+        var landscapeFallback: UIImage?
 
-        for url in candidates {
+        for (index, url) in candidates.enumerated() {
             if isTemporarilyFailed(url) { continue }
-            if let image = await fetchAndStore(url) {
-                return image
+
+            let image: UIImage?
+            if let cached = await ImageCache.shared.image(for: url) {
+                image = cached
+            } else {
+                image = await fetchAndStore(url)
             }
+            guard let image else { continue }
+
+            if preferPortrait, isVisiblyLandscape(image) {
+                let hasLater = index < candidates.count - 1
+                if hasLater {
+                    if landscapeFallback == nil { landscapeFallback = image }
+                    continue
+                }
+            }
+            return image
         }
-        return nil
+        return landscapeFallback
     }
 
     /// Warm cache without caring about the result (home/profiles rows).
-    func prefetch(urls: [URL]) async {
-        _ = await loadFirst(of: urls)
+    func prefetch(urls: [URL], preferPortrait: Bool = false) async {
+        _ = await loadFirst(of: urls, preferPortrait: preferPortrait)
+    }
+
+    private func isVisiblyLandscape(_ image: UIImage) -> Bool {
+        let size = image.size
+        guard size.height > 1 else { return false }
+        return size.width / size.height > 1.25
     }
 
     private func fetchAndStore(_ url: URL) async -> UIImage? {

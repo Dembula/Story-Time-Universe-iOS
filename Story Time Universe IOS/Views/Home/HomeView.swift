@@ -44,8 +44,7 @@ struct HomeView: View {
                         ForEach(catalogRows.filter(\.shouldDisplay)) { row in
                             ContentRowView(
                                 title: row.title,
-                                items: row.items,
-                                showEmptyPlaceholder: row.reserveEmptySlot && row.items.isEmpty
+                                items: row.items
                             ) { selectedContent = $0 }
                         }
                     }

@@ -5,18 +5,22 @@ import UIKit
 struct RemoteImage: View {
     let urls: [URL]
     var contentMode: ContentMode = .fill
+    /// Prefer taller artwork — skip landscape frames when better candidates exist.
+    var preferPortrait: Bool = false
 
     @State private var image: UIImage?
     @State private var failed = false
 
-    init(url: URL?, contentMode: ContentMode = .fill) {
+    init(url: URL?, contentMode: ContentMode = .fill, preferPortrait: Bool = false) {
         self.urls = url.map { [$0] } ?? []
         self.contentMode = contentMode
+        self.preferPortrait = preferPortrait
     }
 
-    init(urls: [URL], contentMode: ContentMode = .fill) {
+    init(urls: [URL], contentMode: ContentMode = .fill, preferPortrait: Bool = false) {
         self.urls = urls
         self.contentMode = contentMode
+        self.preferPortrait = preferPortrait
     }
 
     var body: some View {
@@ -38,9 +42,13 @@ struct RemoteImage: View {
         }
         .clipped()
         .animation(.easeOut(duration: 0.2), value: image != nil)
-        .task(id: urls.map(\.absoluteString).joined(separator: "|")) {
+        .task(id: taskKey) {
             await load()
         }
+    }
+
+    private var taskKey: String {
+        urls.map(\.absoluteString).joined(separator: "|") + (preferPortrait ? "|p" : "|l")
     }
 
     private var placeholder: some View {
@@ -77,7 +85,7 @@ struct RemoteImage: View {
         }
 
         failed = false
-        if let loaded = await ImageLoader.shared.loadFirst(of: urls) {
+        if let loaded = await ImageLoader.shared.loadFirst(of: urls, preferPortrait: preferPortrait) {
             image = loaded
             failed = false
         } else if image == nil {

@@ -21,36 +21,27 @@ enum MediaURL {
 
         let primary = preferBackdrop ? backdropUrl : posterUrl
         let secondary = preferBackdrop ? posterUrl : backdropUrl
+        let backdropKey = normalizedKey(backdropUrl)
 
-        // 1) Direct https for the requested art type
-        append(displayableHTTPURL(from: primary))
-
-        // Poster rows must never fall back to a wide backdrop (looks wrong in tall cards).
-        // Backdrop/hero may fall back to poster when no backdrop exists.
         if preferBackdrop {
+            // Hero / Continue Watching — wide art first.
+            append(displayableHTTPURL(from: primary))
+            append(previewProxyURL(from: primary))
+            append(siteRelativeURL(from: primary))
+            append(streamThumbnailURL(from: videoUrl, time: "5s", height: 720, width: nil))
             append(displayableHTTPURL(from: secondary))
-        }
-
-        // 2) One Cloudflare Stream still from the video
-        append(streamThumbnailURL(
-            from: videoUrl,
-            time: preferBackdrop ? "5s" : "2s",
-            height: preferBackdrop ? 720 : 480
-        ))
-
-        // 3) Authenticated storage preview for the primary art only (plus poster fallback for hero)
-        append(previewProxyURL(from: primary))
-        if preferBackdrop, result.count < 3 {
             append(previewProxyURL(from: secondary))
-        }
-
-        // 4) Relative site paths for primary (and poster fallback for hero)
-        append(siteRelativeURL(from: primary))
-        if preferBackdrop, result.count < 4 {
             append(siteRelativeURL(from: secondary))
+        } else {
+            // Poster cards — never use backdrop URLs; try real poster sources
+            // before Stream video frames (those look like backdrops in tall cards).
+            append(posterOnly(displayableHTTPURL(from: primary), excludingBackdrop: backdropKey))
+            append(posterOnly(previewProxyURL(from: primary), excludingBackdrop: backdropKey))
+            append(posterOnly(siteRelativeURL(from: primary), excludingBackdrop: backdropKey))
+            // Last resort: portrait-cropped stream still (not a full landscape backdrop).
+            append(streamThumbnailURL(from: videoUrl, time: "2s", height: 480, width: 320))
         }
 
-        // Cap so loaders don't cascade through many slow failures.
         if result.count > 4 {
             return Array(result.prefix(4))
         }
@@ -96,7 +87,10 @@ enum MediaURL {
             || raw.contains(".amazonaws.com/")
             || raw.contains("r2.cloudflarestorage.com")
             || raw.contains("storage.googleapis.com")
-        guard looksPrivate else { return nil }
+            || (!raw.lowercased().hasPrefix("http://") && !raw.lowercased().hasPrefix("https://") && !raw.hasPrefix("/"))
+        // Also proxy plain s3-style keys that aren't full URLs.
+        let shouldProxy = looksPrivate || raw.hasPrefix("s3://")
+        guard shouldProxy else { return nil }
         var components = URLComponents(string: AppConfig.apiBaseURL.absoluteString + "/api/files/preview")
         components?.queryItems = [
             URLQueryItem(name: "ref", value: raw),
@@ -105,26 +99,34 @@ enum MediaURL {
         return components?.url
     }
 
-    static func streamThumbnailURL(from videoUrl: String?, time: String = "3s", height: Int = 480) -> URL? {
+    static func streamThumbnailURL(
+        from videoUrl: String?,
+        time: String = "3s",
+        height: Int = 480,
+        width: Int? = nil
+    ) -> URL? {
         guard let uid = extractStreamUID(from: videoUrl) else { return nil }
         var components = URLComponents(string: "https://videodelivery.net/\(uid)/thumbnails/thumbnail.jpg")
-        components?.queryItems = [
+        var items = [
             URLQueryItem(name: "time", value: time),
             URLQueryItem(name: "height", value: String(height)),
         ]
+        if let width {
+            items.append(URLQueryItem(name: "width", value: String(width)))
+            items.append(URLQueryItem(name: "fit", value: "crop"))
+        }
+        components?.queryItems = items
         return components?.url
     }
 
     static func extractStreamUID(from videoUrl: String?) -> String? {
         guard let videoUrl = videoUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !videoUrl.isEmpty else { return nil }
 
-        // Direct UID (32 hex-ish cloudflare ids are typically 32 chars)
         if videoUrl.range(of: #"^[a-fA-F0-9]{32}$"#, options: .regularExpression) != nil {
             return videoUrl
         }
 
         guard let url = URL(string: videoUrl), let host = url.host?.lowercased() else {
-            // Sometimes stored without scheme
             if videoUrl.contains("videodelivery.net") || videoUrl.contains("cloudflarestream.com") {
                 return extractStreamUID(from: "https://\(videoUrl)")
             }
@@ -133,9 +135,22 @@ enum MediaURL {
         guard host.contains("videodelivery.net") || host.contains("cloudflarestream.com") else { return nil }
         let parts = url.path.split(separator: "/").map(String.init)
         guard let first = parts.first, !first.isEmpty else { return nil }
-        // Skip file-like segments
         if first.contains(".") { return nil }
         return first
+    }
+
+    /// Drop backdrop URLs from poster candidate lists.
+    private static func posterOnly(_ url: URL?, excludingBackdrop backdropKey: String?) -> URL? {
+        guard let url else { return nil }
+        if let backdropKey, !backdropKey.isEmpty, normalizedKey(url.absoluteString) == backdropKey {
+            return nil
+        }
+        return url
+    }
+
+    private static func normalizedKey(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        return raw.lowercased()
     }
 
     private static func isNonImageMediaURL(_ raw: String) -> Bool {

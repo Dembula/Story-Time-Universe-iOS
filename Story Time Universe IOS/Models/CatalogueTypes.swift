@@ -90,23 +90,22 @@ enum CatalogueTypes {
         "LIVE_EVENT", "REALITY", "WEB_SERIES", "NEWS", "EDUCATIONAL",
     ]
 
-    /// `VIEWER_NAV_CATEGORIES` — reserved empty slots so uploads light them up.
-    /// Order matches Production browse home (Movies → … → Podcasts).
+    /// `VIEWER_NAV_CATEGORIES` order — rows stay hidden until they have titles.
     static let primaryHomeRows: [RowDefinition] = [
-        .init(id: "MOVIE", typeValue: "MOVIE", title: "Movies", reserveEmptySlot: true),
-        .init(id: "SERIES", typeValue: "SERIES", title: "Series", reserveEmptySlot: true),
-        .init(id: "ANIMATION", typeValue: "ANIMATION", title: "Animation", reserveEmptySlot: true),
-        .init(id: "SPORTS", typeValue: "SPORTS", title: "Sports", reserveEmptySlot: true),
+        .init(id: "MOVIE", typeValue: "MOVIE", title: "Movies", reserveEmptySlot: false),
+        .init(id: "SERIES", typeValue: "SERIES", title: "Series", reserveEmptySlot: false),
+        .init(id: "ANIMATION", typeValue: "ANIMATION", title: "Animation", reserveEmptySlot: false),
+        .init(id: "SPORTS", typeValue: "SPORTS", title: "Sports", reserveEmptySlot: false),
         // Web Comedy row = COMEDY_SKIT + STAND_UP
         .init(
             id: "COMEDY",
             typeValues: ["COMEDY_SKIT", "STAND_UP"],
             title: "Comedy",
-            reserveEmptySlot: true
+            reserveEmptySlot: false
         ),
-        .init(id: "DOCUMENTARY", typeValue: "DOCUMENTARY", title: "Documentaries", reserveEmptySlot: true),
-        .init(id: "SHOW", typeValue: "SHOW", title: "Shows", reserveEmptySlot: true),
-        .init(id: "PODCAST", typeValue: "PODCAST", title: "Podcasts", reserveEmptySlot: true),
+        .init(id: "DOCUMENTARY", typeValue: "DOCUMENTARY", title: "Documentaries", reserveEmptySlot: false),
+        .init(id: "SHOW", typeValue: "SHOW", title: "Shows", reserveEmptySlot: false),
+        .init(id: "PODCAST", typeValue: "PODCAST", title: "Podcasts", reserveEmptySlot: false),
     ]
 
     /// Overflow formats + browse extras (shown once they have titles).
@@ -156,6 +155,6 @@ struct HomeCatalogRow: Identifiable, Hashable {
     let reserveEmptySlot: Bool
 
     var shouldDisplay: Bool {
-        !items.isEmpty || reserveEmptySlot
+        !items.isEmpty
     }
 }

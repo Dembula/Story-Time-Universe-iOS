@@ -5,15 +5,15 @@ enum ImagePrefetcher {
     private static let maxConcurrent = 6
 
     static func prefetchPosters(_ items: [ContentItem]) {
-        prefetch(items.map(\.posterCandidates))
+        prefetch(items.map(\.posterCandidates), preferPortrait: true)
     }
 
     static func prefetchBackdrops(_ items: [ContentItem]) {
-        prefetch(items.map(\.backdropCandidates))
+        prefetch(items.map(\.backdropCandidates), preferPortrait: false)
     }
 
     static func prefetchContinueWatching(_ items: [ContinueWatchingItem]) {
-        prefetch(items.map(\.backdropCandidates))
+        prefetch(items.map(\.backdropCandidates), preferPortrait: false)
     }
 
     static func prefetchHome(
@@ -30,7 +30,7 @@ enum ImagePrefetcher {
         }
     }
 
-    static func prefetch(_ candidateLists: [[URL]]) {
+    static func prefetch(_ candidateLists: [[URL]], preferPortrait: Bool = false) {
         let lists = candidateLists.filter { !$0.isEmpty }
         guard !lists.isEmpty else { return }
 
@@ -43,7 +43,7 @@ enum ImagePrefetcher {
                     let candidates = lists[next]
                     next += 1
                     group.addTask {
-                        await ImageLoader.shared.prefetch(urls: candidates)
+                        await ImageLoader.shared.prefetch(urls: candidates, preferPortrait: preferPortrait)
                     }
                 }
 
@@ -52,7 +52,7 @@ enum ImagePrefetcher {
                         let candidates = lists[next]
                         next += 1
                         group.addTask {
-                            await ImageLoader.shared.prefetch(urls: candidates)
+                            await ImageLoader.shared.prefetch(urls: candidates, preferPortrait: preferPortrait)
                         }
                     }
                 }
