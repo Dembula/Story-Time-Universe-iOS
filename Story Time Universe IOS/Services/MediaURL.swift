@@ -22,26 +22,31 @@ enum MediaURL {
         let primary = preferBackdrop ? backdropUrl : posterUrl
         let secondary = preferBackdrop ? posterUrl : backdropUrl
 
-        // 1) Direct https artwork (best quality / fastest when present)
+        // 1) Direct https for the requested art type
         append(displayableHTTPURL(from: primary))
-        append(displayableHTTPURL(from: secondary))
 
-        // 2) One Cloudflare Stream still from the video (skip duplicate times / artwork-as-stream)
+        // Poster rows must never fall back to a wide backdrop (looks wrong in tall cards).
+        // Backdrop/hero may fall back to poster when no backdrop exists.
+        if preferBackdrop {
+            append(displayableHTTPURL(from: secondary))
+        }
+
+        // 2) One Cloudflare Stream still from the video
         append(streamThumbnailURL(
             from: videoUrl,
             time: preferBackdrop ? "5s" : "2s",
             height: preferBackdrop ? 720 : 480
         ))
 
-        // 3) Authenticated storage preview for private objects only
+        // 3) Authenticated storage preview for the primary art only (plus poster fallback for hero)
         append(previewProxyURL(from: primary))
-        if result.count < 3 {
+        if preferBackdrop, result.count < 3 {
             append(previewProxyURL(from: secondary))
         }
 
-        // 4) Relative site paths (/public/posters/...)
+        // 4) Relative site paths for primary (and poster fallback for hero)
         append(siteRelativeURL(from: primary))
-        if result.count < 4 {
+        if preferBackdrop, result.count < 4 {
             append(siteRelativeURL(from: secondary))
         }
 

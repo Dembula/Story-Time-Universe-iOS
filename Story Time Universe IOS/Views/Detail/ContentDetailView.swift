@@ -14,6 +14,7 @@ struct ContentDetailView: View {
     @State private var inWatchlist = false
     @State private var watchlistBusy = false
     @State private var selectedRelated: ContentItem?
+    @State private var selectedPerson: PersonRoute?
 
     private var displayTitle: String {
         detail?.title ?? seed?.title ?? ""
@@ -60,7 +61,8 @@ struct ContentDetailView: View {
                     errorMessage: errorMessage,
                     onPlayTrailer: { startPlayback(trailer: true, episodeId: nil) },
                     onPlayEpisode: { startPlayback(trailer: false, episodeId: $0) },
-                    onSelectRelated: { selectedRelated = $0 }
+                    onSelectRelated: { selectedRelated = $0 },
+                    onSelectPerson: { selectedPerson = $0 }
                 )
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
@@ -72,6 +74,9 @@ struct ContentDetailView: View {
         .task { await load() }
         .navigationDestination(item: $selectedRelated) { item in
             ContentDetailView(contentId: item.id, seed: item)
+        }
+        .navigationDestination(item: $selectedPerson) { route in
+            PersonDetailView(route: route)
         }
         .fullScreenCover(isPresented: $showPlayer) {
             playerCover
@@ -279,6 +284,7 @@ private struct DetailBodySections: View {
     let onPlayTrailer: () -> Void
     let onPlayEpisode: (String) -> Void
     let onSelectRelated: (ContentItem) -> Void
+    let onSelectPerson: (PersonRoute) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
@@ -294,12 +300,12 @@ private struct DetailBodySections: View {
                 DetailEpisodesSection(seasons: seasons, onPlayEpisode: onPlayEpisode)
             }
 
-            if !related.isEmpty {
-                DetailRelatedSection(items: related, onSelect: onSelectRelated)
+            if !crew.isEmpty {
+                DetailCastSection(crew: crew, onSelect: onSelectPerson)
             }
 
-            if !crew.isEmpty {
-                DetailCastSection(crew: crew)
+            if !related.isEmpty {
+                DetailRelatedSection(items: related, onSelect: onSelectRelated)
             }
 
             if !btsVideos.isEmpty {
@@ -529,6 +535,7 @@ private struct DetailRelatedSection: View {
 
 private struct DetailCastSection: View {
     let crew: [CrewCredit]
+    var onSelect: (PersonRoute) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -549,7 +556,13 @@ private struct DetailCastSection: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
                     ForEach(crew) { member in
-                        DetailCastCard(member: member)
+                        Button {
+                            onSelect(PersonRoute(from: member))
+                        } label: {
+                            DetailCastCard(member: member)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Shows profile and credits")
                     }
                 }
                 .padding(.vertical, 4)

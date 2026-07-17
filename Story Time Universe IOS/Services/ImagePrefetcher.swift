@@ -20,16 +20,14 @@ enum ImagePrefetcher {
         featured: [ContentItem],
         continueWatching: [ContinueWatchingItem],
         trending: [ContentItem],
-        movies: [ContentItem],
-        series: [ContentItem],
-        shows: [ContentItem]
+        catalogRows: [HomeCatalogRow]
     ) {
         prefetchBackdrops(featured)
         prefetchContinueWatching(continueWatching)
         prefetchPosters(trending)
-        prefetchPosters(movies)
-        prefetchPosters(series)
-        prefetchPosters(shows)
+        for row in catalogRows where !row.items.isEmpty {
+            prefetchPosters(row.items)
+        }
     }
 
     static func prefetch(_ candidateLists: [[URL]]) {

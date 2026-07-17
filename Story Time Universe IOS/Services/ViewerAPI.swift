@@ -76,6 +76,43 @@ actor ViewerAPI {
         return Self.decodeContentList(data)
     }
 
+    /// Fetch one Home row that may span multiple `type` values (and optional category).
+    func fetchCatalogRow(definition: CatalogueTypes.RowDefinition, limit: Int = 16) async -> [ContentItem] {
+        if definition.typeValues.count == 1, definition.categoryFilter == nil {
+            return (try? await fetchContent(type: definition.typeValues[0], limit: limit)) ?? []
+        }
+
+        var combined: [ContentItem] = []
+        var seen = Set<String>()
+
+        for typeValue in definition.typeValues {
+            let batch = (try? await fetchContent(
+                type: typeValue,
+                category: definition.categoryFilter,
+                limit: limit
+            )) ?? []
+            for item in batch where seen.insert(item.id).inserted {
+                combined.append(item)
+            }
+            if combined.count >= limit { break }
+        }
+
+        // Category-only fallback if type+category returned nothing (API may AND filters tightly).
+        if combined.isEmpty, let category = definition.categoryFilter {
+            let byCategory = (try? await fetchContent(category: category, limit: limit)) ?? []
+            for item in byCategory {
+                let type = item.type?.uppercased() ?? ""
+                if definition.typeValues.isEmpty || definition.typeValues.contains(type) {
+                    if seen.insert(item.id).inserted {
+                        combined.append(item)
+                    }
+                }
+            }
+        }
+
+        return Array(combined.prefix(limit))
+    }
+
     /// Decode catalogue items one-by-one so a single bad row cannot blank the whole UI.
     nonisolated private static func decodeContentList(_ data: Data) -> [ContentItem] {
         let decoder = JSONDecoder()
@@ -110,6 +147,40 @@ actor ViewerAPI {
         )
         guard response.statusCode == 200 else { return [] }
         return (try? api.decode([CrewCredit].self, from: data)) ?? []
+    }
+
+    /// Web person card — `GET /api/people/{personId}/preview`
+    func fetchPersonPreview(personId: String) async throws -> PersonPreview {
+        let (data, response) = try await api.request(path: "api/people/\(personId)/preview")
+        guard response.statusCode == 200 else { throw api.parseAPIError(data: data, status: response.statusCode) }
+        return try api.decode(PersonPreview.self, from: data)
+    }
+
+    /// Resolve via crew member id — `GET /api/people/preview?crewMemberId=`
+    func fetchPersonPreview(crewMemberId: String) async throws -> PersonPreview {
+        let (data, response) = try await api.request(
+            path: "api/people/preview",
+            query: [URLQueryItem(name: "crewMemberId", value: crewMemberId)]
+        )
+        guard response.statusCode == 200 else { throw api.parseAPIError(data: data, status: response.statusCode) }
+        return try api.decode(PersonPreview.self, from: data)
+    }
+
+    func fetchPerson(route: PersonRoute) async throws -> PersonPreview {
+        if let personId = route.personId, !personId.isEmpty {
+            do {
+                return try await fetchPersonPreview(personId: personId)
+            } catch {
+                if let crewMemberId = route.crewMemberId, !crewMemberId.isEmpty {
+                    return try await fetchPersonPreview(crewMemberId: crewMemberId)
+                }
+                throw error
+            }
+        }
+        if let crewMemberId = route.crewMemberId, !crewMemberId.isEmpty {
+            return try await fetchPersonPreview(crewMemberId: crewMemberId)
+        }
+        throw APIError.server("No person profile is linked to this credit.")
     }
 
     func fetchRelated(excluding id: String, category: String?, type: String?, limit: Int = 12) async throws -> [ContentItem] {

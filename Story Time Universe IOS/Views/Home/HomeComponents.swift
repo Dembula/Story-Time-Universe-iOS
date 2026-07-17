@@ -134,6 +134,7 @@ struct HeroCard: View {
 struct ContentRowView: View {
     let title: String
     let items: [ContentItem]
+    var showEmptyPlaceholder: Bool = false
     var onSelect: (ContentItem) -> Void
 
     var body: some View {
@@ -158,6 +159,32 @@ struct ContentRowView: View {
                     }
                     .padding(.horizontal, 20)
                 }
+            }
+        } else if showEmptyPlaceholder {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title)
+                    .font(.title3.bold())
+                    .foregroundStyle(Theme.foreground)
+                    .padding(.horizontal, 20)
+
+                HStack(spacing: 12) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                            .frame(width: 118, height: 176)
+                            .overlay {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "film")
+                                        .foregroundStyle(Theme.muted.opacity(0.5))
+                                    Text("Coming soon")
+                                        .font(.caption2.weight(.medium))
+                                        .foregroundStyle(Theme.muted.opacity(0.8))
+                                }
+                            }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .accessibilityLabel("\(title), coming soon")
             }
         }
     }

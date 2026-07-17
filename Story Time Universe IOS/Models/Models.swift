@@ -467,3 +467,93 @@ struct APIErrorBody: Codable {
     let requiresPin: Bool?
     let paymentRequired: Bool?
 }
+
+// MARK: - Person / credits (matches web PersonPreview)
+
+struct PersonPreview: Codable, Identifiable, Hashable {
+    var id: String { personId }
+    let personId: String
+    let displayName: String
+    let imageUrl: String?
+    let roles: [String]?
+    let bio: String?
+    let blurb: String?
+    let productionCount: Int?
+    let followerCount: Int?
+    let followingCount: Int?
+    let verified: Bool?
+    let profileHref: String?
+    let latestProject: PersonLatestProject?
+    let topGenres: [String]?
+    let isCreator: Bool?
+    let creatorUserId: String?
+    let credits: [PersonCredit]?
+
+    var imageCandidates: [URL] {
+        MediaURL.candidates(posterUrl: imageUrl, backdropUrl: nil, videoUrl: nil, preferBackdrop: false)
+    }
+
+    var initials: String {
+        let parts = displayName.split(separator: " ").prefix(2)
+        let chars = parts.compactMap(\.first)
+        return chars.isEmpty ? String(displayName.prefix(1)).uppercased() : String(chars).uppercased()
+    }
+}
+
+struct PersonLatestProject: Codable, Hashable {
+    let id: String
+    let title: String
+    let type: String?
+    let posterUrl: String?
+}
+
+struct PersonCredit: Codable, Identifiable, Hashable {
+    var id: String { "\(contentId)-\(role)" }
+    let contentId: String
+    let title: String
+    let type: String?
+    let role: String
+    let posterUrl: String?
+    let year: Int?
+
+    var posterCandidates: [URL] {
+        MediaURL.candidates(posterUrl: posterUrl, backdropUrl: nil, videoUrl: nil, preferBackdrop: false)
+    }
+
+    var asContentItem: ContentItem {
+        ContentItem(
+            id: contentId,
+            title: title,
+            description: nil,
+            type: type,
+            category: nil,
+            year: year,
+            posterUrl: posterUrl,
+            backdropUrl: nil,
+            trailerUrl: nil,
+            videoUrl: nil,
+            duration: nil,
+            featured: nil,
+            tags: nil,
+            minAge: nil
+        )
+    }
+}
+
+/// Navigation payload when tapping a cast/crew credit.
+struct PersonRoute: Hashable, Identifiable {
+    var id: String { personId ?? crewMemberId ?? fallbackName }
+    var personId: String?
+    var crewMemberId: String?
+    var fallbackName: String
+    var fallbackRole: String?
+    var fallbackBio: String?
+
+    init(from member: CrewCredit) {
+        personId = member.creditPersonId
+        crewMemberId = member.id
+        fallbackName = member.name
+        fallbackRole = member.role
+        fallbackBio = member.bio
+    }
+}

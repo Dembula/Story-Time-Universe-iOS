@@ -77,29 +77,38 @@ struct LaunchSplashView: View {
                 .font(.system(size: 20, weight: .semibold, design: .default))
                 .tracking(7)
                 .foregroundStyle(Color.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .fixedSize(horizontal: true, vertical: false)
                 .opacity(titleVisible ? 1 : 0)
                 .offset(y: titleVisible ? 0 : 10)
 
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
                 Capsule()
                     .fill(Theme.accent.opacity(0.85))
                     .frame(height: 1.5)
+                    .frame(maxWidth: .infinity)
+
                 Text("UNIVERSE")
                     .font(.system(size: 12, weight: .bold, design: .default))
-                    .tracking(5)
+                    .tracking(4)
                     .foregroundStyle(Theme.accent)
+                    .lineLimit(1)
+                    .minimumScaleFactor(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(1)
+
                 Capsule()
                     .fill(Theme.accent.opacity(0.85))
                     .frame(height: 1.5)
+                    .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: 220)
+            .frame(maxWidth: 280)
             .padding(.top, 14)
             .opacity(universeVisible ? 1 : 0)
             .offset(y: universeVisible ? 0 : 8)
         }
-        // Keep brand centered and prevent layout from spilling past edges.
         .frame(maxWidth: .infinity)
-        .clipped()
     }
 
     // MARK: - Loader (single label — no stacked duplicate text)
