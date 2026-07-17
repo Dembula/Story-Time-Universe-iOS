@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// Loads remote images with shared cookies and multi-URL fallbacks.
+/// Loads remote images with shared disk cache, prefetch support, and multi-URL fallbacks.
 struct RemoteImage: View {
     let urls: [URL]
     var contentMode: ContentMode = .fill
@@ -26,6 +26,7 @@ struct RemoteImage: View {
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                    .transition(.opacity)
             } else if failed || urls.isEmpty {
                 placeholder
             } else {
@@ -36,6 +37,7 @@ struct RemoteImage: View {
             }
         }
         .clipped()
+        .animation(.easeOut(duration: 0.2), value: image != nil)
         .task(id: urls.map(\.absoluteString).joined(separator: "|")) {
             await load()
         }
@@ -59,66 +61,27 @@ struct RemoteImage: View {
     }
 
     private func load() async {
-        image = nil
-        failed = false
         guard !urls.isEmpty else {
             failed = true
+            image = nil
             return
         }
 
-        for url in urls {
-            if let cached = ImageCache.shared.image(for: url) {
+        // Instant memory hits — no spinner flash on revisit.
+        for url in urls.prefix(4) {
+            if let cached = ImageCache.shared.memoryImage(for: url) {
                 image = cached
                 failed = false
                 return
             }
-            if let loaded = await fetchImage(url) {
-                ImageCache.shared.set(loaded, for: url)
-                image = loaded
-                failed = false
-                return
-            }
         }
-        failed = true
-        image = nil
-    }
 
-    private func fetchImage(_ url: URL) async -> UIImage? {
-        var request = URLRequest(url: url)
-        request.setValue("StoryTimeUniverseiOS/1.0", forHTTPHeaderField: "User-Agent")
-        request.setValue("image/avif,image/webp,image/apng,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 25
-        request.cachePolicy = .returnCacheDataElseLoad
-
-        do {
-            let (data, response) = try await APIClient.shared.session.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                return nil
-            }
-            // Reject tiny/error payloads
-            guard data.count > 256, let uiImage = UIImage(data: data) else { return nil }
-            return uiImage
-        } catch {
-            return nil
+        failed = false
+        if let loaded = await ImageLoader.shared.loadFirst(of: urls) {
+            image = loaded
+            failed = false
+        } else if image == nil {
+            failed = true
         }
-    }
-}
-
-final class ImageCache {
-    static let shared = ImageCache()
-    private let cache = NSCache<NSURL, UIImage>()
-
-    init() {
-        cache.countLimit = 300
-        cache.totalCostLimit = 80 * 1024 * 1024
-    }
-
-    func image(for url: URL) -> UIImage? {
-        cache.object(forKey: url as NSURL)
-    }
-
-    func set(_ image: UIImage, for url: URL) {
-        let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
-        cache.setObject(image, forKey: url as NSURL, cost: cost)
     }
 }

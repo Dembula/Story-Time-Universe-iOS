@@ -93,6 +93,7 @@ struct SearchView: View {
         defer { isSearching = false }
         do {
             results = try await ViewerAPI.shared.search(query: q)
+            ImagePrefetcher.prefetchPosters(results.map(\.asContentItem))
         } catch {
             errorMessage = error.localizedDescription
         }

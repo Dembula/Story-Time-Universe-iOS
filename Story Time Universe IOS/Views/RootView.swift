@@ -10,6 +10,7 @@ struct RootView: View {
             switch appState.route {
             case .loading:
                 LaunchSplashView()
+                    .transition(.opacity)
             case .signIn:
                 SignInView()
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -21,7 +22,7 @@ struct RootView: View {
                     .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.35), value: appState.route)
+        .animation(.easeInOut(duration: 0.45), value: appState.route)
         .task {
             await appState.bootstrap()
         }

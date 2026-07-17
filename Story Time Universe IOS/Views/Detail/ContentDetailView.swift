@@ -142,6 +142,8 @@ struct ContentDetailView: View {
 
             crew = (try? await crewReq) ?? []
             related = (try? await relatedReq) ?? []
+            ImagePrefetcher.prefetch([loaded.backdropCandidates])
+            ImagePrefetcher.prefetchPosters(related)
             let list = try? await listReq
             inWatchlist = list?.contains(where: { $0.id == contentId }) ?? false
         } catch {

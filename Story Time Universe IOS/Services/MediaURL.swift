@@ -22,24 +22,33 @@ enum MediaURL {
         let primary = preferBackdrop ? backdropUrl : posterUrl
         let secondary = preferBackdrop ? posterUrl : backdropUrl
 
-        // 1) Direct https artwork (skip manifests / iframes)
+        // 1) Direct https artwork (best quality / fastest when present)
         append(displayableHTTPURL(from: primary))
         append(displayableHTTPURL(from: secondary))
 
-        // 2) Cloudflare Stream still frames from the video
-        append(streamThumbnailURL(from: videoUrl, time: preferBackdrop ? "5s" : "3s", height: preferBackdrop ? 720 : 480))
-        append(streamThumbnailURL(from: videoUrl, time: "1s", height: 480))
-        append(streamThumbnailURL(from: primary))
-        append(streamThumbnailURL(from: secondary))
+        // 2) One Cloudflare Stream still from the video (skip duplicate times / artwork-as-stream)
+        append(streamThumbnailURL(
+            from: videoUrl,
+            time: preferBackdrop ? "5s" : "2s",
+            height: preferBackdrop ? 720 : 480
+        ))
 
-        // 3) Authenticated storage preview for private objects
+        // 3) Authenticated storage preview for private objects only
         append(previewProxyURL(from: primary))
-        append(previewProxyURL(from: secondary))
+        if result.count < 3 {
+            append(previewProxyURL(from: secondary))
+        }
 
         // 4) Relative site paths (/public/posters/...)
         append(siteRelativeURL(from: primary))
-        append(siteRelativeURL(from: secondary))
+        if result.count < 4 {
+            append(siteRelativeURL(from: secondary))
+        }
 
+        // Cap so loaders don't cascade through many slow failures.
+        if result.count > 4 {
+            return Array(result.prefix(4))
+        }
         return result
     }
 

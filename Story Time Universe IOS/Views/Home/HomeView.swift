@@ -126,6 +126,15 @@ struct HomeView: View {
         shows = sh
         continueWatching = cw
 
+        ImagePrefetcher.prefetchHome(
+            featured: featured,
+            continueWatching: continueWatching,
+            trending: trending,
+            movies: movies,
+            series: series,
+            shows: shows
+        )
+
         if featured.isEmpty && trending.isEmpty && movies.isEmpty {
             errorMessage = "Could not load the catalogue. Pull to refresh."
         }

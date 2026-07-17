@@ -255,6 +255,7 @@ struct ProfilesView: View {
             backdropItems = Array(combined.prefix(8))
         }
         backdropIndex = 0
+        ImagePrefetcher.prefetchPosters(backdropItems)
         appState.subscription = try? await ViewerAPI.shared.fetchSubscription()
     }
 

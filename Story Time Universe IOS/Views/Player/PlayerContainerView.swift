@@ -296,26 +296,34 @@ private struct SeekFeedback: Equatable {
 private struct BrightnessSlider: View {
     @Binding var brightness: Double
 
-    private let trackHeight: CGFloat = 160
-    private let trackWidth: CGFloat = 6
+    private let trackHeight: CGFloat = 150
+    private let trackWidth: CGFloat = 4
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
             Image(systemName: "sun.max.fill")
-                .font(.caption)
-                .foregroundStyle(.white)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.95))
+                .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
 
             ZStack(alignment: .bottom) {
                 Capsule()
-                    .fill(.white.opacity(0.25))
+                    .fill(.white.opacity(0.22))
                     .frame(width: trackWidth, height: trackHeight)
+
                 Capsule()
-                    .fill(Theme.accent)
-                    .frame(width: trackWidth, height: trackHeight * CGFloat(clamped))
+                    .fill(
+                        LinearGradient(
+                            colors: [Theme.accent, Theme.accentGold],
+                            startPoint: .bottom,
+                            endPoint: .top
+                        )
+                    )
+                    .frame(width: trackWidth, height: max(trackHeight * CGFloat(clamped), trackWidth))
+                    .shadow(color: Theme.accent.opacity(0.55), radius: 6, y: 0)
             }
-            .frame(width: 36, height: trackHeight)
+            .frame(width: 44, height: trackHeight)
             .contentShape(Rectangle())
-            .background(.ultraThinMaterial, in: Capsule())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
@@ -325,12 +333,10 @@ private struct BrightnessSlider: View {
             )
 
             Image(systemName: "sun.min.fill")
-                .font(.caption)
-                .foregroundStyle(.white)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+                .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
         }
-        .padding(.vertical, 12)
-        .padding(.horizontal, 6)
-        .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 20))
     }
 
     private var clamped: Double { min(1, max(0, brightness)) }

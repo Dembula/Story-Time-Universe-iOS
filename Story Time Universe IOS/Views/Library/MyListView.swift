@@ -58,6 +58,7 @@ struct MyListView: View {
         do {
             items = try await ViewerAPI.shared.fetchWatchlist()
             errorMessage = nil
+            ImagePrefetcher.prefetchPosters(items)
         } catch {
             errorMessage = error.localizedDescription
         }

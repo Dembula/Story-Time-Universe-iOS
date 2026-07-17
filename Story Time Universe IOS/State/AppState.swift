@@ -26,22 +26,30 @@ final class AppState: ObservableObject {
         APIClient.shared.setViewerProfileCookie(nil)
         activeProfile = nil
 
-        // Brief branded splash so launch doesn't flash blank.
-        try? await Task.sleep(nanoseconds: 700_000_000)
+        // Keep splash up long enough for the branded entrance + progress animation.
+        let splashStarted = ContinuousClock.now
+        let minimumSplash: Duration = .milliseconds(2800)
 
         do {
             let session = try await AuthService.shared.fetchSession()
             self.session = session
             if session?.user != nil {
                 subscription = try? await ViewerAPI.shared.fetchSubscription()
-                route = .profiles
-            } else {
-                route = .signIn
             }
+            await waitRemainingSplash(from: splashStarted, minimum: minimumSplash)
+            route = session?.user != nil ? .profiles : .signIn
         } catch {
             session = nil
-            route = .signIn
             bootstrapError = error.localizedDescription
+            await waitRemainingSplash(from: splashStarted, minimum: minimumSplash)
+            route = .signIn
+        }
+    }
+
+    private func waitRemainingSplash(from start: ContinuousClock.Instant, minimum: Duration) async {
+        let elapsed = ContinuousClock.now - start
+        if elapsed < minimum {
+            try? await Task.sleep(for: minimum - elapsed)
         }
     }
 
