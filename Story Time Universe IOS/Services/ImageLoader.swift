@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import UIKit
 
 /// Shared network loader for posters/backdrops — used by RemoteImage and prefetch.
@@ -13,21 +14,21 @@ actor ImageLoader {
         config.httpCookieStorage = HTTPCookieStorage.shared
         config.httpCookieAcceptPolicy = .always
         config.httpShouldSetCookies = true
-        config.timeoutIntervalForRequest = 10
-        config.timeoutIntervalForResource = 18
-        config.waitsForConnectivity = false
+        // Catalogue posters can be very large (The Second poster is ~14MB on S3).
+        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForResource = 120
+        config.waitsForConnectivity = true
         config.urlCache = URLCache(
-            memoryCapacity: 48 * 1024 * 1024,
-            diskCapacity: 256 * 1024 * 1024,
+            memoryCapacity: 64 * 1024 * 1024,
+            diskCapacity: 512 * 1024 * 1024,
             diskPath: "storytime-url-cache"
         )
         config.requestCachePolicy = .returnCacheDataElseLoad
         session = URLSession(configuration: config)
     }
 
-    /// Try candidates in order; memory/disk hits win immediately. Caps work for speed.
-    /// When `preferPortrait` is true, skip clearly landscape frames if a later candidate may be better
-    /// (stops video stills / backdrops filling tall poster cards).
+    /// Try candidates in order; memory/disk hits win immediately.
+    /// When `preferPortrait` is true, skip clearly landscape frames if a later candidate may be better.
     func loadFirst(of urls: [URL], preferPortrait: Bool = false) async -> UIImage? {
         let candidates = Array(urls.prefix(4))
         guard !candidates.isEmpty else { return nil }
@@ -57,7 +58,6 @@ actor ImageLoader {
         return landscapeFallback
     }
 
-    /// Warm cache without caring about the result (home/profiles rows).
     func prefetch(urls: [URL], preferPortrait: Bool = false) async {
         _ = await loadFirst(of: urls, preferPortrait: preferPortrait)
     }
@@ -76,26 +76,52 @@ actor ImageLoader {
         var request = URLRequest(url: url)
         request.setValue("StoryTimeUniverseiOS/1.0", forHTTPHeaderField: "User-Agent")
         request.setValue("image/avif,image/webp,image/apng,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 10
+        // Per-request timeout — large S3 catalogue art needs headroom.
+        request.timeoutInterval = isLikelyLargeAsset(url) ? 90 : 45
         request.cachePolicy = .returnCacheDataElseLoad
 
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                markFailed(url)
+                markFailed(url, seconds: 45)
                 return nil
             }
-            guard data.count > 256, let image = UIImage(data: data) else {
-                markFailed(url)
+            guard data.count > 256 else {
+                markFailed(url, seconds: 45)
                 return nil
             }
-            ImageCache.shared.store(image, data: data, for: url)
+
+            // Downsample huge uploads (14MB+ masters) so cards load fast and fit memory.
+            guard let image = Self.downsampledImage(from: data, maxPixelSize: 1200) else {
+                markFailed(url, seconds: 30)
+                return nil
+            }
+
+            let cacheData = image.jpegData(compressionQuality: 0.82) ?? data
+            ImageCache.shared.store(image, data: cacheData, for: url)
             clearFailed(url)
             return image
         } catch {
-            markFailed(url)
+            let ns = error as NSError
+            // Timeouts / transient network must NOT blacklist the real poster for long —
+            // that was causing Stream video frames to win permanently for The Second.
+            if ns.domain == NSURLErrorDomain,
+               [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost, NSURLErrorNotConnectedToInternet]
+                .contains(ns.code) {
+                markFailed(url, seconds: 5)
+            } else {
+                markFailed(url, seconds: 45)
+            }
             return nil
         }
+    }
+
+    private func isLikelyLargeAsset(_ url: URL) -> Bool {
+        let host = url.host?.lowercased() ?? ""
+        return host.contains("amazonaws.com")
+            || host.contains("r2.cloudflarestorage.com")
+            || host.contains("storage.googleapis.com")
+            || url.path.lowercased().contains("/uploads/")
     }
 
     private func isTemporarilyFailed(_ url: URL) -> Bool {
@@ -105,11 +131,30 @@ actor ImageLoader {
         return false
     }
 
-    private func markFailed(_ url: URL) {
-        failedUntil[url.absoluteString] = Date().addingTimeInterval(90)
+    private func markFailed(_ url: URL, seconds: TimeInterval) {
+        failedUntil[url.absoluteString] = Date().addingTimeInterval(seconds)
     }
 
     private func clearFailed(_ url: URL) {
         failedUntil[url.absoluteString] = nil
+    }
+
+    /// Decode with ImageIO thumbnailing — critical for multi‑MB catalogue masters.
+    nonisolated private static func downsampledImage(from data: Data, maxPixelSize: CGFloat) -> UIImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else {
+            return UIImage(data: data)
+        }
+
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) {
+            return UIImage(cgImage: cgImage)
+        }
+        return UIImage(data: data)
     }
 }

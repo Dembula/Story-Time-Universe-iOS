@@ -33,13 +33,18 @@ enum MediaURL {
             append(previewProxyURL(from: secondary))
             append(siteRelativeURL(from: secondary))
         } else {
-            // Poster cards — never use backdrop URLs; try real poster sources
-            // before Stream video frames (those look like backdrops in tall cards).
+            // Poster cards — never use backdrop URLs.
+            // Order matters: real poster sources first. Do NOT fall back to Stream video
+            // frames when a poster exists — those landscape stills look like backdrops
+            // (The Second: 14MB S3 poster was timing out, then Stream won).
             append(posterOnly(displayableHTTPURL(from: primary), excludingBackdrop: backdropKey))
             append(posterOnly(previewProxyURL(from: primary), excludingBackdrop: backdropKey))
             append(posterOnly(siteRelativeURL(from: primary), excludingBackdrop: backdropKey))
-            // Last resort: portrait-cropped stream still (not a full landscape backdrop).
-            append(streamThumbnailURL(from: videoUrl, time: "2s", height: 480, width: 320))
+
+            let hasPosterArt = !(posterUrl?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            if !hasPosterArt {
+                append(streamThumbnailURL(from: videoUrl, time: "2s", height: 480, width: 320))
+            }
         }
 
         if result.count > 4 {
