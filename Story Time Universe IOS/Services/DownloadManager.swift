@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 
 /// Manages offline downloads for in-app-only playback.
