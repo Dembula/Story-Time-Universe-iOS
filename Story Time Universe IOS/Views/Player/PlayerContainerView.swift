@@ -488,6 +488,7 @@ final class PlayerViewModel: ObservableObject {
                 await avPlayer.seek(to: time)
             }
 
+            Self.configureAudioSession()
             avPlayer.play()
             isPlaying = true
             if !trailer {
