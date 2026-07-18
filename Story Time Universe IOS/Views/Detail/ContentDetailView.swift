@@ -49,6 +49,7 @@ struct ContentDetailView: View {
                     hasTrailer: detail?.hasTrailer == true,
                     inWatchlist: inWatchlist,
                     watchlistBusy: watchlistBusy,
+                    downloadSpec: filmDownloadSpec,
                     onPlay: { startPlayback(trailer: false, episodeId: firstEpisodeId) },
                     onTrailer: { startPlayback(trailer: true, episodeId: nil) },
                     onWatchlist: { Task { await toggleWatchlist() } }
@@ -59,6 +60,9 @@ struct ContentDetailView: View {
                     hasTrailer: detail?.hasTrailer == true,
                     trailerImageURLs: detail?.backdropCandidates ?? detail?.posterCandidates ?? [],
                     seasons: detail?.seasons ?? [],
+                    seriesTitle: displayTitle,
+                    seriesContentId: contentId,
+                    contentType: detail?.type,
                     related: related,
                     crew: crew,
                     btsVideos: detail?.btsVideos ?? [],
@@ -87,12 +91,48 @@ struct ContentDetailView: View {
                 contentId: contentId,
                 title: displayTitle,
                 episodeId: request.episodeId,
-                isTrailer: request.isTrailer
+                isTrailer: request.isTrailer,
+                episodes: request.isTrailer ? [] : episodePlaybackInfos
             )
             .onDisappear {
                 OrientationLock.unlockPortrait()
             }
         }
+    }
+
+    private var episodePlaybackInfos: [EpisodePlaybackInfo] {
+        guard let seasons = detail?.seasons else { return [] }
+        var list: [EpisodePlaybackInfo] = []
+        for season in seasons {
+            let sNum = season.seasonNumber ?? 1
+            for episode in season.episodes ?? [] {
+                let eNum = episode.episodeNumber ?? (list.count + 1)
+                list.append(
+                    EpisodePlaybackInfo(
+                        episodeId: episode.id,
+                        title: episode.title ?? "Episode \(eNum)",
+                        episodeLabel: "S\(sNum) E\(eNum)",
+                        thumbnailUrl: episode.thumbnailUrl,
+                        durationSeconds: episode.duration
+                    )
+                )
+            }
+        }
+        return list
+    }
+
+    private var filmDownloadSpec: DownloadSpec? {
+        // Series episodes are downloaded individually; only offer a single download for films.
+        guard (detail?.seasons?.isEmpty ?? true) else { return nil }
+        return DownloadSpec(
+            contentId: contentId,
+            episodeId: nil,
+            title: displayTitle,
+            subtitle: nil,
+            posterUrl: detail?.posterUrl ?? seed?.posterUrl,
+            type: detail?.type ?? seed?.type,
+            durationSeconds: detail?.duration
+        )
     }
 
     private var metaText: String {
@@ -173,6 +213,7 @@ private struct DetailHeroView: View {
     let hasTrailer: Bool
     let inWatchlist: Bool
     let watchlistBusy: Bool
+    let downloadSpec: DownloadSpec?
     let onPlay: () -> Void
     let onTrailer: () -> Void
     let onWatchlist: () -> Void
@@ -206,6 +247,10 @@ private struct DetailHeroView: View {
                 ratingRow
 
                 actionRow
+
+                if let downloadSpec {
+                    DownloadButton(spec: downloadSpec, style: .labeled)
+                }
             }
             .padding(20)
         }
@@ -272,6 +317,9 @@ private struct DetailBodySections: View {
     let hasTrailer: Bool
     let trailerImageURLs: [URL]
     let seasons: [Season]
+    let seriesTitle: String
+    let seriesContentId: String
+    let contentType: String?
     let related: [ContentItem]
     let crew: [CrewCredit]
     let btsVideos: [BtsVideo]
@@ -292,7 +340,13 @@ private struct DetailBodySections: View {
             }
 
             if !seasons.isEmpty {
-                DetailEpisodesSection(seasons: seasons, onPlayEpisode: onPlayEpisode)
+                DetailEpisodesSection(
+                    seasons: seasons,
+                    seriesTitle: seriesTitle,
+                    seriesContentId: seriesContentId,
+                    contentType: contentType,
+                    onPlayEpisode: onPlayEpisode
+                )
             }
 
             if !crew.isEmpty {
@@ -405,6 +459,9 @@ private struct DetailTrailersSection: View {
 
 private struct DetailEpisodesSection: View {
     let seasons: [Season]
+    let seriesTitle: String
+    let seriesContentId: String
+    let contentType: String?
     let onPlayEpisode: (String) -> Void
 
     var body: some View {
@@ -414,7 +471,13 @@ private struct DetailEpisodesSection: View {
                 .foregroundStyle(Theme.foreground)
 
             ForEach(seasons, id: \.stableId) { season in
-                DetailSeasonBlock(season: season, onPlayEpisode: onPlayEpisode)
+                DetailSeasonBlock(
+                    season: season,
+                    seriesTitle: seriesTitle,
+                    seriesContentId: seriesContentId,
+                    contentType: contentType,
+                    onPlayEpisode: onPlayEpisode
+                )
             }
         }
     }
@@ -422,6 +485,9 @@ private struct DetailEpisodesSection: View {
 
 private struct DetailSeasonBlock: View {
     let season: Season
+    let seriesTitle: String
+    let seriesContentId: String
+    let contentType: String?
     let onPlayEpisode: (String) -> Void
 
     var body: some View {
@@ -431,7 +497,20 @@ private struct DetailSeasonBlock: View {
                 .foregroundStyle(Theme.accentGold)
 
             ForEach(season.episodes ?? []) { episode in
-                DetailEpisodeRow(episode: episode) {
+                DetailEpisodeRow(
+                    episode: episode,
+                    downloadSpec: DownloadSpec(
+                        contentId: seriesContentId,
+                        episodeId: episode.id,
+                        title: seriesTitle,
+                        subtitle: "S\(season.seasonNumber ?? 1) E\(episode.episodeNumber ?? 0) · \(episode.title ?? "Episode")",
+                        posterUrl: episode.thumbnailUrl,
+                        type: contentType,
+                        durationSeconds: episode.duration,
+                        seasonNumber: season.seasonNumber,
+                        episodeNumber: episode.episodeNumber
+                    )
+                ) {
                     onPlayEpisode(episode.id)
                 }
             }
@@ -441,6 +520,7 @@ private struct DetailSeasonBlock: View {
 
 private struct DetailEpisodeRow: View {
     let episode: Episode
+    let downloadSpec: DownloadSpec
     let onPlay: () -> Void
 
     private var thumbURL: URL? {
@@ -449,44 +529,49 @@ private struct DetailEpisodeRow: View {
     }
 
     var body: some View {
-        Button(action: onPlay) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.white.opacity(0.08))
-                        .frame(width: 120, height: 68)
-                    if let thumbURL {
-                        RemoteImage(url: thumbURL)
+        HStack(spacing: 12) {
+            Button(action: onPlay) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.white.opacity(0.08))
                             .frame(width: 120, height: 68)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                    } else {
-                        Image(systemName: "play.fill")
-                            .foregroundStyle(.white.opacity(0.8))
+                        if let thumbURL {
+                            RemoteImage(url: thumbURL)
+                                .frame(width: 120, height: 68)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                        } else {
+                            Image(systemName: "play.fill")
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
                     }
-                }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("\(episode.episodeNumber ?? 0). \(episode.title ?? "Episode")")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Theme.foreground)
-                        .lineLimit(2)
-                    if let description = episode.description {
-                        Text(description)
-                            .font(.caption)
-                            .foregroundStyle(Theme.muted)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(episode.episodeNumber ?? 0). \(episode.title ?? "Episode")")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.foreground)
                             .lineLimit(2)
+                        if let description = episode.description {
+                            Text(description)
+                                .font(.caption)
+                                .foregroundStyle(Theme.muted)
+                                .lineLimit(2)
+                        }
+                        if let duration = episode.duration, duration > 0 {
+                            Text("\(duration) min")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.muted)
+                        }
                     }
-                    if let duration = episode.duration, duration > 0 {
-                        Text("\(duration) min")
-                            .font(.caption2)
-                            .foregroundStyle(Theme.muted)
-                    }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                .padding(.vertical, 4)
             }
-            .padding(.vertical, 4)
+            .buttonStyle(.plain)
+
+            DownloadButton(spec: downloadSpec, style: .icon)
+                .frame(width: 40)
         }
-        .buttonStyle(.plain)
     }
 }
 

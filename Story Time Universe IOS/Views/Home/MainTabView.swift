@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum MainTab: Hashable {
-    case home, search, myList, account
+    case home, search, downloads, myList, account
 }
 
 struct MainTabView: View {
@@ -17,6 +17,10 @@ struct MainTabView: View {
             SearchView()
                 .tabItem { Label("Search", systemImage: "magnifyingglass") }
                 .tag(MainTab.search)
+
+            DownloadsView()
+                .tabItem { Label("Downloads", systemImage: "arrow.down.circle.fill") }
+                .tag(MainTab.downloads)
 
             MyListView()
                 .tabItem { Label("My List", systemImage: "bookmark.fill") }

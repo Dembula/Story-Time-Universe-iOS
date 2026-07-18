@@ -8,15 +8,22 @@ struct PlayerContainerView: View {
     let title: String
     var episodeId: String?
     var isTrailer: Bool = false
+    /// Ordered episode queue for series playback (empty for films/trailers).
+    var episodes: [EpisodePlaybackInfo] = []
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = PlayerViewModel()
+    @ObservedObject private var downloads = DownloadManager.shared
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
     @State private var isLocked = false
     @State private var brightness = Double(UIScreen.main.brightness)
     @State private var seekFeedback: SeekFeedback?
     @State private var seekFeedbackTask: Task<Void, Never>?
+    @State private var currentEpisodeId: String?
+    @State private var showNextUp = false
+    @State private var nextCountdown = 0
+    @State private var countdownTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -39,11 +46,24 @@ struct PlayerContainerView: View {
                         .opacity(controlsVisible ? 1 : 0)
                         .allowsHitTesting(controlsVisible)
                         .animation(.easeInOut(duration: 0.25), value: controlsVisible)
-                } else {
+                } else if !showNextUp {
                     controlsOverlay(player: player)
                         .opacity(controlsVisible ? 1 : 0)
                         .allowsHitTesting(controlsVisible)
                         .animation(.easeInOut(duration: 0.25), value: controlsVisible)
+                }
+
+                if showNextUp, let next = nextEpisode {
+                    NextUpOverlay(
+                        next: next,
+                        countdown: nextCountdown,
+                        canDelete: currentIsDownloaded,
+                        onPlayNext: { playNext(deleteCurrent: false) },
+                        onDeleteAndNext: { playNext(deleteCurrent: true) },
+                        onDismiss: { dismissNextUp() },
+                        onClose: { close() }
+                    )
+                    .transition(.opacity)
                 }
             } else if model.isLoading {
                 ProgressView(isTrailer ? "Loading trailer…" : "Loading…")
@@ -69,20 +89,79 @@ struct PlayerContainerView: View {
         .persistentSystemOverlays(.hidden)
         .task {
             OrientationLock.lockLandscape()
+            currentEpisodeId = episodeId
             await model.start(contentId: contentId, episodeId: episodeId, trailer: isTrailer)
             scheduleHideControls()
         }
         .onDisappear {
             hideTask?.cancel()
+            countdownTask?.cancel()
             model.stop()
             OrientationLock.unlockPortrait()
         }
         .onChange(of: model.isPlaying) { _, playing in
             if playing {
                 scheduleHideControls()
-            } else {
+            } else if !showNextUp {
                 showControls(persistent: true)
             }
+        }
+        .onChange(of: model.didReachEnd) { _, ended in
+            guard ended, !isTrailer else { return }
+            if nextEpisode != nil {
+                beginNextUp()
+            }
+        }
+    }
+
+    private var currentIndex: Int? {
+        guard let currentEpisodeId else { return nil }
+        return episodes.firstIndex { $0.episodeId == currentEpisodeId }
+    }
+
+    private var nextEpisode: EpisodePlaybackInfo? {
+        guard let idx = currentIndex, idx + 1 < episodes.count else { return nil }
+        return episodes[idx + 1]
+    }
+
+    private var currentIsDownloaded: Bool {
+        downloads.record(contentId: contentId, episodeId: currentEpisodeId)?.isPlayableOffline ?? false
+    }
+
+    private func beginNextUp() {
+        hideTask?.cancel()
+        controlsVisible = false
+        nextCountdown = 8
+        withAnimation(.easeInOut(duration: 0.3)) { showNextUp = true }
+        countdownTask?.cancel()
+        countdownTask = Task {
+            while nextCountdown > 0 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { return }
+                await MainActor.run { nextCountdown -= 1 }
+            }
+            if Task.isCancelled { return }
+            await MainActor.run { playNext(deleteCurrent: false) }
+        }
+    }
+
+    private func dismissNextUp() {
+        countdownTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.25)) { showNextUp = false }
+        showControls(persistent: true)
+    }
+
+    private func playNext(deleteCurrent: Bool) {
+        guard let next = nextEpisode else { close(); return }
+        countdownTask?.cancel()
+        if deleteCurrent, let currentEpisodeId {
+            downloads.deleteDownload(contentId: contentId, episodeId: currentEpisodeId)
+        }
+        withAnimation(.easeInOut(duration: 0.25)) { showNextUp = false }
+        currentEpisodeId = next.episodeId
+        Task {
+            await model.start(contentId: contentId, episodeId: next.episodeId, trailer: false)
+            scheduleHideControls()
         }
     }
 
@@ -294,6 +373,118 @@ private struct SeekFeedback: Equatable {
     let total: Double
 }
 
+private struct NextUpOverlay: View {
+    let next: EpisodePlaybackInfo
+    let countdown: Int
+    let canDelete: Bool
+    let onPlayNext: () -> Void
+    let onDeleteAndNext: () -> Void
+    let onDismiss: () -> Void
+    let onClose: () -> Void
+
+    private var thumbURLs: [URL] {
+        MediaURL.candidates(posterUrl: next.thumbnailUrl, backdropUrl: nil, videoUrl: nil, preferBackdrop: true)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.82).ignoresSafeArea()
+
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(12)
+                            .background(.ultraThinMaterial)
+                            .clipShape(Circle())
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+
+                Spacer()
+
+                HStack(alignment: .center, spacing: 20) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.08))
+                        RemoteImage(urls: thumbURLs)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 34))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .shadow(radius: 6)
+                    }
+                    .frame(width: 208, height: 117)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("UP NEXT")
+                            .font(.caption.weight(.bold))
+                            .tracking(2)
+                            .foregroundStyle(Theme.accent)
+
+                        Text(next.episodeLabel)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.85))
+
+                        Text(next.title)
+                            .font(.title3.bold())
+                            .foregroundStyle(.white)
+                            .lineLimit(2)
+
+                        HStack(spacing: 12) {
+                            Button(action: onPlayNext) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "play.fill")
+                                    Text(countdown > 0 ? "Play Next · \(countdown)" : "Play Next")
+                                        .fontWeight(.semibold)
+                                }
+                                .foregroundStyle(.black)
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 22)
+                                .background(Color.white)
+                                .clipShape(Capsule())
+                            }
+
+                            if canDelete {
+                                Button(action: onDeleteAndNext) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "trash")
+                                        Text("Delete & Watch Next")
+                                            .fontWeight(.semibold)
+                                    }
+                                    .foregroundStyle(.white)
+                                    .padding(.vertical, 12)
+                                    .padding(.horizontal, 22)
+                                    .background(Color.white.opacity(0.16))
+                                    .clipShape(Capsule())
+                                }
+                            }
+                        }
+                        .padding(.top, 6)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(24)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .padding(.horizontal, 40)
+
+                Spacer()
+
+                Button(action: onDismiss) {
+                    Text("Keep watching credits")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+                .padding(.bottom, 28)
+            }
+        }
+    }
+}
+
 private struct BrightnessSlider: View {
     @Binding var brightness: Double
 
@@ -441,6 +632,7 @@ final class PlayerViewModel: ObservableObject {
     @Published var isLoading = true
     @Published var errorMessage: String?
     @Published var isPlaying = false
+    @Published var didReachEnd = false
 
     private var contentId: String = ""
     private var progressTimer: AnyCancellable?
@@ -456,25 +648,32 @@ final class PlayerViewModel: ObservableObject {
         defer { isLoading = false }
 
         Self.configureAudioSession()
+        didReachEnd = false
 
         do {
-            let bundle = try await ViewerAPI.shared.fetchPlaybackBundle(
-                contentId: contentId,
-                episodeId: episodeId,
-                trailer: trailer
-            )
-            guard let url = bundle.streamURL else {
-                throw APIError.server("No playable stream was returned for this title.")
+            let asset: AVURLAsset
+            if !trailer, let offline = DownloadManager.shared.offlineAsset(contentId: contentId, episodeId: episodeId) {
+                // Play the sandboxed offline copy — works with no network.
+                asset = offline
+            } else {
+                let bundle = try await ViewerAPI.shared.fetchPlaybackBundle(
+                    contentId: contentId,
+                    episodeId: episodeId,
+                    trailer: trailer
+                )
+                guard let url = bundle.streamURL else {
+                    throw APIError.server("No playable stream was returned for this title.")
+                }
+                asset = Self.authenticatedAsset(for: url)
             }
 
             let resumeAt: Int
             if trailer {
                 resumeAt = 0
             } else {
-                let progress = try await ViewerAPI.shared.fetchWatchProgress(contentId: contentId)
-                resumeAt = progress.position
+                // Resilient offline: don't fail playback if progress can't be fetched.
+                resumeAt = (try? await ViewerAPI.shared.fetchWatchProgress(contentId: contentId).position) ?? 0
             }
-            let asset = Self.authenticatedAsset(for: url)
             let item = AVPlayerItem(asset: asset)
             let avPlayer = AVPlayer(playerItem: item)
             avPlayer.automaticallyWaitsToMinimizeStalling = true
@@ -502,6 +701,7 @@ final class PlayerViewModel: ObservableObject {
             ) { [weak self] _ in
                 Task { @MainActor in
                     self?.isPlaying = false
+                    self?.didReachEnd = true
                     self?.flushProgress(final: true)
                 }
             }
