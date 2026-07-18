@@ -63,40 +63,13 @@ struct LaunchSplashView: View {
                     .blur(radius: 18)
                     .scaleEffect(logoGlow ? 1.08 : 0.92)
 
-                ZStack {
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    Color(red: 0.14, green: 0.10, blue: 0.05),
-                                    .black,
-                                ],
-                                center: .center,
-                                startRadius: 6,
-                                endRadius: 120
-                            )
-                        )
-
-                    Image("AppLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .padding(30)
-
-                    Circle()
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [Theme.accentGold, Theme.accent, Theme.accent.opacity(0.4)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 2.5
-                        )
-                }
-                .frame(width: 188, height: 188)
-                .clipShape(Circle())
-                .shadow(color: Theme.accent.opacity(logoGlow ? 0.65 : 0.35), radius: logoGlow ? 32 : 16, y: 4)
-                .scaleEffect(logoVisible ? 1 : 0.78)
-                .opacity(logoVisible ? 1 : 0)
+                Image("AppLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 188, height: 188)
+                    .shadow(color: Theme.accent.opacity(logoGlow ? 0.65 : 0.35), radius: logoGlow ? 32 : 16, y: 4)
+                    .scaleEffect(logoVisible ? 1 : 0.78)
+                    .opacity(logoVisible ? 1 : 0)
             }
             .padding(.bottom, 10)
 
