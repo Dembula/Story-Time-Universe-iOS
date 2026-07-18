@@ -1,3 +1,4 @@
+import AVFoundation
 import UIKit
 
 /// Portrait everywhere except during playback (landscape-only then).
@@ -38,6 +39,19 @@ enum OrientationLock {
 }
 
 final class OrientationAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        // Playback category so media audio ignores the ring/silent switch.
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
+        } catch {
+            print("AudioSession launch configuration failed: \(error)")
+        }
+        return true
+    }
+
     func application(
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?
