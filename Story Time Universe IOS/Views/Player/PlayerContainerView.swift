@@ -1,3 +1,4 @@
+import AVFoundation
 import AVKit
 import Combine
 import SwiftUI
@@ -369,22 +370,44 @@ private struct PlayerProgressBar: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            Slider(
-                value: Binding(
-                    get: { isScrubbing ? scrubValue : current },
-                    set: { scrubValue = $0 }
-                ),
-                in: 0...max(duration, 0.1),
-                onEditingChanged: { editing in
-                    isScrubbing = editing
-                    if !editing {
-                        let time = CMTime(seconds: scrubValue, preferredTimescale: 600)
-                        player.seek(to: time)
-                        current = scrubValue
-                    }
+            GeometryReader { geo in
+                let width = geo.size.width
+                let value = isScrubbing ? scrubValue : current
+                let fraction = duration > 0 ? min(max(value / duration, 0), 1) : 0
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.22))
+                        .frame(height: 4)
+
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [Theme.accent, Theme.accentGold],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(width * CGFloat(fraction), 0), height: 4)
                 }
-            )
-            .tint(Theme.accent)
+                .frame(maxHeight: .infinity, alignment: .center)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { g in
+                            isScrubbing = true
+                            let ratio = min(max(g.location.x / width, 0), 1)
+                            scrubValue = Double(ratio) * duration
+                        }
+                        .onEnded { _ in
+                            let time = CMTime(seconds: scrubValue, preferredTimescale: 600)
+                            player.seek(to: time)
+                            current = scrubValue
+                            isScrubbing = false
+                        }
+                )
+            }
+            .frame(height: 22)
 
             HStack {
                 Text(format(current))
@@ -432,6 +455,8 @@ final class PlayerViewModel: ObservableObject {
         errorMessage = nil
         defer { isLoading = false }
 
+        Self.configureAudioSession()
+
         do {
             let bundle = try await ViewerAPI.shared.fetchPlaybackBundle(
                 contentId: contentId,
@@ -453,6 +478,8 @@ final class PlayerViewModel: ObservableObject {
             let item = AVPlayerItem(asset: asset)
             let avPlayer = AVPlayer(playerItem: item)
             avPlayer.automaticallyWaitsToMinimizeStalling = true
+            avPlayer.isMuted = false
+            avPlayer.volume = 1.0
             self.player = avPlayer
             observePlayback(avPlayer)
 
@@ -562,6 +589,16 @@ final class PlayerViewModel: ObservableObject {
                     durationSeconds: watchedSeconds
                 )
             }
+        }
+    }
+
+    private static func configureAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .moviePlayback, options: [])
+            try session.setActive(true, options: [])
+        } catch {
+            print("AudioSession configuration failed: \(error)")
         }
     }
 

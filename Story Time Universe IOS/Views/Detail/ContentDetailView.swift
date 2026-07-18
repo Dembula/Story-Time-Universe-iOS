@@ -1,5 +1,11 @@
 import SwiftUI
 
+struct PlaybackRequest: Identifiable {
+    let id = UUID()
+    let episodeId: String?
+    let isTrailer: Bool
+}
+
 struct ContentDetailView: View {
     let contentId: String
     var seed: ContentItem?
@@ -8,9 +14,7 @@ struct ContentDetailView: View {
     @State private var crew: [CrewCredit] = []
     @State private var related: [ContentItem] = []
     @State private var errorMessage: String?
-    @State private var showPlayer = false
-    @State private var playTrailer = false
-    @State private var playerEpisodeId: String?
+    @State private var playbackRequest: PlaybackRequest?
     @State private var inWatchlist = false
     @State private var watchlistBusy = false
     @State private var selectedRelated: ContentItem?
@@ -78,23 +82,16 @@ struct ContentDetailView: View {
         .navigationDestination(item: $selectedPerson) { route in
             PersonDetailView(route: route)
         }
-        .fullScreenCover(isPresented: $showPlayer) {
-            playerCover
-        }
-    }
-
-    @ViewBuilder
-    private var playerCover: some View {
-        PlayerContainerView(
-            contentId: contentId,
-            title: displayTitle,
-            episodeId: playerEpisodeId,
-            isTrailer: playTrailer
-        )
-        .onDisappear {
-            OrientationLock.unlockPortrait()
-            playTrailer = false
-            playerEpisodeId = nil
+        .fullScreenCover(item: $playbackRequest) { request in
+            PlayerContainerView(
+                contentId: contentId,
+                title: displayTitle,
+                episodeId: request.episodeId,
+                isTrailer: request.isTrailer
+            )
+            .onDisappear {
+                OrientationLock.unlockPortrait()
+            }
         }
     }
 
@@ -126,9 +123,7 @@ struct ContentDetailView: View {
     }
 
     private func startPlayback(trailer: Bool, episodeId: String?) {
-        playTrailer = trailer
-        playerEpisodeId = episodeId
-        showPlayer = true
+        playbackRequest = PlaybackRequest(episodeId: episodeId, isTrailer: trailer)
     }
 
     private func load() async {
