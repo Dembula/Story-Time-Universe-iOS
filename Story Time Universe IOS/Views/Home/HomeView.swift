@@ -11,6 +11,8 @@ struct HomeView: View {
     @State private var selectedContent: ContentItem?
     @State private var playingContent: ContentItem?
     @State private var heroIndex = 0
+    @State private var isLoadInFlight = false
+    @State private var queuedForceReload = false
 
     var body: some View {
         NavigationStack {
@@ -99,13 +101,31 @@ struct HomeView: View {
     }
 
     private func load(force: Bool) async {
+        // A hard pull can trigger overlapping refresh requests. Serialize loads so a stale
+        // or failed request can't overwrite a successful one and leave Home "stuck."
+        if isLoadInFlight {
+            if force { queuedForceReload = true }
+            return
+        }
+
         if !force && (!featured.isEmpty || !trending.isEmpty || !catalogRows.isEmpty) {
             isLoading = false
             return
         }
+
+        isLoadInFlight = true
         isLoading = true
-        errorMessage = nil
-        defer { isLoading = false }
+        if force {
+            errorMessage = nil
+        }
+        defer {
+            isLoading = false
+            isLoadInFlight = false
+            if queuedForceReload {
+                queuedForceReload = false
+                Task { await load(force: true) }
+            }
+        }
 
         async let featuredReq = ViewerAPI.shared.fetchContent(featured: true, limit: 8)
         async let trendingReq = ViewerAPI.shared.fetchContent(limit: 24)
@@ -116,11 +136,20 @@ struct HomeView: View {
         let f = (try? await featuredReq) ?? []
         let t = (try? await trendingReq) ?? []
         let cw = (try? await continueReq) ?? []
+        let discoveredRows = mergeDiscoveredTypes(knownRows: typeResults, sample: t + f)
+        let hasFreshData = !f.isEmpty || !t.isEmpty || discoveredRows.contains(where: { !$0.items.isEmpty })
 
-        featured = f.isEmpty ? Array(t.prefix(5)) : f
-        trending = t
-        continueWatching = cw
-        catalogRows = mergeDiscoveredTypes(knownRows: typeResults, sample: t + f)
+        // If refresh fails and returns empty payloads, keep the previous good catalogue
+        // instead of replacing UI with a permanent empty/error state.
+        if hasFreshData || (featured.isEmpty && trending.isEmpty && catalogRows.isEmpty) {
+            featured = f.isEmpty ? Array(t.prefix(5)) : f
+            trending = t
+            continueWatching = cw
+            catalogRows = discoveredRows
+        } else if !cw.isEmpty {
+            // Continue watching can still update independently.
+            continueWatching = cw
+        }
 
         ImagePrefetcher.prefetchHome(
             featured: featured,
@@ -131,6 +160,8 @@ struct HomeView: View {
 
         if featured.isEmpty && trending.isEmpty && catalogRows.allSatisfy(\.items.isEmpty) {
             errorMessage = "Could not load the catalogue. Pull to refresh."
+        } else {
+            errorMessage = nil
         }
     }
 
