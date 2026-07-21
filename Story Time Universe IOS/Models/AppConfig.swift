@@ -1,15 +1,10 @@
 import Foundation
 
 enum AppConfig {
-    /// Production viewer web app — payments & account management open here.
+    /// Production API / viewer origin.
     static let webBaseURL = URL(string: "https://story-time.online")!
     static let apiBaseURL = webBaseURL
 
-    static let renewSubscriptionURL = webBaseURL.appendingPathComponent("browse/account/renew")
-    static let accountURL = webBaseURL.appendingPathComponent("browse/account")
-    static let changePlanURL = webBaseURL.appendingPathComponent("browse/account/change-plan")
-    static let packageOnboardingURL = webBaseURL.appendingPathComponent("onboarding/package")
-    static let signUpURL = webBaseURL.appendingPathComponent("auth/signup")
     /// Viewer sign-up landing (terms gate when required).
     static let viewerSignUpURL = URL(string: "https://story-time.online/auth/signup")!
 

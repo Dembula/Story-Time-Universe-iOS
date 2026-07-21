@@ -11,14 +11,6 @@ struct AccountView: View {
 
                     subscriptionCard
 
-                    webActionsCard
-
-                    Text("Payments are handled only on the Story Time website. The app never processes card payments.")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.muted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-
                     VStack(spacing: 12) {
                         Button {
                             appState.switchProfile()
@@ -135,7 +127,7 @@ struct AccountView: View {
 
             infoRow(title: "Plan", value: friendlyPlan(appState.subscription?.plan))
             if let end = appState.subscription?.currentPeriodEnd {
-                infoRow(title: "Renews", value: formatDate(end))
+                infoRow(title: "Period ends", value: formatDate(end))
             }
             if let model = appState.subscription?.viewerModel {
                 infoRow(title: "Model", value: model.replacingOccurrences(of: "_", with: " ").capitalized)
@@ -145,36 +137,6 @@ struct AccountView: View {
         .background(Theme.card)
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(Theme.accent.opacity(0.2)))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-
-    private var webActionsCard: some View {
-        VStack(spacing: 0) {
-            webLink(title: "Renew / Pay on Web", systemImage: "safari", url: AppConfig.renewSubscriptionURL)
-            Divider().background(Theme.border)
-            webLink(title: "Change plan on Web", systemImage: "arrow.triangle.2.circlepath", url: AppConfig.changePlanURL)
-            Divider().background(Theme.border)
-            webLink(title: "Manage account on Web", systemImage: "person.crop.circle", url: AppConfig.accountURL)
-        }
-        .background(Theme.card)
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Theme.border))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-
-    private func webLink(title: String, systemImage: String, url: URL) -> some View {
-        Link(destination: url) {
-            HStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 24)
-                Text(title)
-                    .foregroundStyle(Theme.foreground)
-                Spacer()
-                Image(systemName: "arrow.up.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Theme.muted)
-            }
-            .padding(16)
-        }
     }
 
     private func infoRow(title: String, value: String) -> some View {
@@ -200,7 +162,7 @@ struct AccountView: View {
         case "BASE_1": return "Base (1 profile)"
         case "STANDARD_3": return "Standard (3 profiles)"
         case "FAMILY_5": return "Family (5 profiles)"
-        case "PPV_FILM": return "Pay per view"
+        case "PPV_FILM": return "Single title"
         default: return plan.replacingOccurrences(of: "_", with: " ")
         }
     }

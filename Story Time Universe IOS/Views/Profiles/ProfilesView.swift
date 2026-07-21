@@ -207,24 +207,16 @@ struct ProfilesView: View {
     }
 
     private var paymentBanner: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Subscription needs attention")
                 .font(.headline)
                 .foregroundStyle(Theme.foreground)
-            Text("Renew or pay on the website — payments are not taken in the app.")
+            Text("Your account access may be limited until your subscription is active again.")
                 .font(.footnote)
                 .foregroundStyle(Theme.muted)
-            Link(destination: AppConfig.renewSubscriptionURL) {
-                Text("Renew on Web")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Theme.accent)
-                    .foregroundStyle(.black)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.accentSoft)
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.accent.opacity(0.35)))
         .clipShape(RoundedRectangle(cornerRadius: 14))
