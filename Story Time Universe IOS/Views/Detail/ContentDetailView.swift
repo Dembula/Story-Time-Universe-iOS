@@ -111,9 +111,6 @@ struct ContentDetailView: View {
                 isTrailer: request.isTrailer,
                 episodes: request.isTrailer ? [] : episodePlaybackInfos
             )
-            .onDisappear {
-                OrientationLock.unlockPortrait()
-            }
         }
         .sheet(item: $ppvCheckout, onDismiss: {
             // Covers successful auto-close and user Close after paying (if auto-detect was slow).

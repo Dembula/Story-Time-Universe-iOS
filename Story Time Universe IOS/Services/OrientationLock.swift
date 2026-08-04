@@ -7,13 +7,23 @@ enum OrientationLock {
 
     static func lockLandscape() {
         allowed = .landscape
-        force(orientation: .landscapeRight)
+        // Slight delay reduces fullScreenCover + rotation fighting.
+        DispatchQueue.main.async {
+            force(orientation: .landscapeRight)
+        }
     }
 
-    /// Restore portrait after leaving the player.
+    /// Restore portrait after leaving the player — smooth path to avoid UI glitches.
     static func unlockPortrait() {
         allowed = .portrait
-        force(orientation: .portrait)
+        DispatchQueue.main.async {
+            force(orientation: .portrait)
+        }
+        // Second pass after dismiss animation settles.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            guard allowed == .portrait else { return }
+            force(orientation: .portrait)
+        }
     }
 
     private static func force(orientation: UIInterfaceOrientation) {
@@ -26,13 +36,11 @@ enum OrientationLock {
             let mask: UIInterfaceOrientationMask = orientation == .portrait ? .portrait : .landscape
             let pref = UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: mask)
             scene.requestGeometryUpdate(pref) { _ in }
-            UIViewController.attemptRotationToDeviceOrientation()
             scene.windows.forEach { window in
                 window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
             }
         }
 
-        // Nudge the device orientation key so iOS completes the rotation.
         UIDevice.current.setValue(orientation.rawValue, forKey: "orientation")
         UIViewController.attemptRotationToDeviceOrientation()
     }
@@ -43,7 +51,6 @@ final class OrientationAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        // Playback category so media audio ignores the ring/silent switch.
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
         } catch {

@@ -54,7 +54,6 @@ struct DownloadsView: View {
                 isTrailer: false,
                 episodes: item.episodes
             )
-            .onDisappear { OrientationLock.unlockPortrait() }
         }
     }
 

@@ -158,9 +158,6 @@ struct HomeView: View {
             }
             .fullScreenCover(item: $playingContent) { item in
                 PlayerContainerView(contentId: item.id, title: item.title)
-                    .onDisappear {
-                        OrientationLock.unlockPortrait()
-                    }
             }
             .sheet(item: $ppvCheckout, onDismiss: {
                 Task { await handlePPVFinished(allowRetryCheckout: false) }
