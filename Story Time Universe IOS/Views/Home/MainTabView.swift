@@ -31,6 +31,7 @@ struct MainTabView: View {
                 .tag(MainTab.account)
         }
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
         .tint(Theme.accent)
     }
 }

@@ -3,21 +3,29 @@ import SwiftUI
 struct HeroCarousel: View {
     let items: [ContentItem]
     @Binding var index: Int
+    var fullBleed: Bool = false
     var onPlay: (ContentItem) -> Void
     var onOpen: (ContentItem) -> Void
+
+    private var heroHeight: CGFloat {
+        fullBleed
+            ? min(UIScreen.main.bounds.height * 0.62, 560)
+            : min(UIScreen.main.bounds.width * 1.15, 480)
+    }
 
     var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
-            let height = min(width * 1.15, 480)
+            let height = fullBleed ? heroHeight : min(width * 1.15, 480)
 
-            VStack(spacing: 12) {
+            ZStack(alignment: .bottom) {
                 TabView(selection: $index) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
                         HeroCard(
                             item: item,
                             width: width,
                             height: height,
+                            fullBleed: fullBleed,
                             onPlay: { onPlay(item) },
                             onOpen: { onOpen(item) }
                         )
@@ -26,20 +34,27 @@ struct HeroCarousel: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .frame(width: width, height: height)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .padding(.horizontal, 12)
 
-                HStack(spacing: 6) {
-                    ForEach(items.indices, id: \.self) { i in
-                        Capsule()
-                            .fill(i == index ? Theme.accent : Color.white.opacity(0.28))
-                            .frame(width: i == index ? 18 : 6, height: 6)
+                if items.count > 1 {
+                    HStack(spacing: 6) {
+                        ForEach(items.indices, id: \.self) { i in
+                            Capsule()
+                                .fill(i == index ? Color.white : Color.white.opacity(0.35))
+                                .frame(width: i == index ? 18 : 6, height: 6)
+                        }
                     }
+                    .padding(.bottom, fullBleed ? 18 : 8)
                 }
             }
-            .frame(width: width, height: height + 24)
+            .frame(width: width, height: height)
+            .clipShape(
+                fullBleed
+                    ? AnyShape(Rectangle())
+                    : AnyShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            )
+            .padding(.horizontal, fullBleed ? 0 : 12)
         }
-        .frame(height: min(UIScreen.main.bounds.width * 1.15, 480) + 24)
+        .frame(height: heroHeight + (fullBleed ? 0 : 24))
         .task(id: items.count) {
             await autoCycle()
         }
@@ -48,7 +63,7 @@ struct HeroCarousel: View {
     private func autoCycle() async {
         guard items.count > 1 else { return }
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            try? await Task.sleep(nanoseconds: 5_500_000_000)
             guard !Task.isCancelled, items.count > 1 else { return }
             withAnimation(.easeInOut(duration: 0.45)) {
                 index = (index + 1) % items.count
@@ -57,41 +72,59 @@ struct HeroCarousel: View {
     }
 }
 
+/// Type erasure for clipShape switch
+private struct AnyShape: Shape {
+    private let pathBuilder: (CGRect) -> Path
+    init<S: Shape>(_ shape: S) {
+        pathBuilder = { shape.path(in: $0) }
+    }
+    func path(in rect: CGRect) -> Path { pathBuilder(rect) }
+}
+
 struct HeroCard: View {
     let item: ContentItem
     var width: CGFloat
     var height: CGFloat
+    var fullBleed: Bool = false
     var onPlay: () -> Void
     var onOpen: () -> Void
 
     var body: some View {
         ZStack(alignment: .bottom) {
             RemoteImage(urls: item.backdropCandidates)
-                .frame(width: width - 24, height: height)
+                .frame(width: width - (fullBleed ? 0 : 24), height: height)
+
+            // Top fade for status/title overlay readability
+            LinearGradient(
+                colors: [.black.opacity(fullBleed ? 0.55 : 0.2), .clear, .clear],
+                startPoint: .top,
+                endPoint: .center
+            )
 
             LinearGradient(
                 colors: [.clear, .black.opacity(0.35), .black.opacity(0.92)],
-                startPoint: .top,
+                startPoint: .center,
                 endPoint: .bottom
             )
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("Featured")
-                    .font(.caption.weight(.semibold))
+                Text(item.displayType.uppercased())
+                    .font(.caption.weight(.bold))
+                    .tracking(1.2)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(.ultraThinMaterial)
                     .clipShape(Capsule())
 
                 Text(item.title)
-                    .font(.system(size: 30, weight: .heavy))
+                    .font(.system(size: fullBleed ? 34 : 30, weight: .heavy))
                     .foregroundStyle(.white)
                     .lineLimit(2)
                     .minimumScaleFactor(0.65)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(
-                    [item.displayType, item.category]
+                    [item.displayType, item.category, item.year.map(String.init)]
                         .compactMap { $0 }
                         .filter { !$0.isEmpty }
                         .joined(separator: " • ")
@@ -116,18 +149,23 @@ struct HeroCard: View {
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(.white)
                             .frame(width: 46, height: 46)
-                            .background(Color.white.opacity(0.16))
+                            .background(Color.white.opacity(0.18))
+                            .background(.ultraThinMaterial)
                             .clipShape(Circle())
                     }
                     .accessibilityLabel("More info")
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.bottom, 18)
+            .padding(.horizontal, fullBleed ? 20 : 18)
+            .padding(.bottom, fullBleed ? 28 : 18)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(width: width - 24, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(width: width - (fullBleed ? 0 : 24), height: height)
+        .clipShape(
+            fullBleed
+                ? AnyShape(Rectangle())
+                : AnyShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        )
     }
 }
 
@@ -140,10 +178,15 @@ struct ContentRowView: View {
     var body: some View {
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                Text(title)
-                    .font(.title3.bold())
-                    .foregroundStyle(Theme.foreground)
-                    .padding(.horizontal, 20)
+                HStack(spacing: 4) {
+                    Text(title)
+                        .font(.title3.bold())
+                        .foregroundStyle(Theme.foreground)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Theme.muted)
+                }
+                .padding(.horizontal, 20)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
@@ -201,7 +244,7 @@ struct ContinueWatchingRow: View {
                     .font(.title3.bold())
                     .foregroundStyle(Theme.foreground)
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(Theme.muted)
             }
             .padding(.horizontal, 20)

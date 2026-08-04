@@ -171,6 +171,12 @@ struct ContentDetailView: View {
             let loaded = try await ViewerAPI.shared.fetchContentDetail(id: contentId)
             detail = loaded
 
+            // Warm main stream + trailer so Play is near-instant.
+            Task { await PlaybackWarmCache.shared.warm(contentId: contentId) }
+            if let firstEp = loaded.seasons?.first?.episodes?.first?.id {
+                Task { await PlaybackWarmCache.shared.warm(contentId: contentId, episodeId: firstEp) }
+            }
+
             async let crewReq = ViewerAPI.shared.fetchCrew(contentId: contentId)
             async let relatedReq = ViewerAPI.shared.fetchRelated(
                 excluding: contentId,
@@ -181,7 +187,10 @@ struct ContentDetailView: View {
             async let listReq = ViewerAPI.shared.fetchWatchlist()
 
             crew = (try? await crewReq) ?? []
-            related = (try? await relatedReq) ?? []
+            related = ParentalControls.shared.filter(
+                (try? await relatedReq) ?? [],
+                profileAge: nil
+            )
             ImagePrefetcher.prefetch([loaded.backdropCandidates])
             ImagePrefetcher.prefetchPosters(related)
             let list = try? await listReq
@@ -222,17 +231,23 @@ private struct DetailHeroView: View {
         ZStack(alignment: .bottomLeading) {
             RemoteImage(urls: imageURLs)
                 .frame(maxWidth: .infinity)
-                .frame(height: 420)
+                .frame(height: 460)
 
             LinearGradient(
-                colors: [.clear, .black.opacity(0.35), .black.opacity(0.95)],
+                colors: [.black.opacity(0.35), .clear, .clear],
                 startPoint: .top,
+                endPoint: .center
+            )
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.4), .black.opacity(0.96)],
+                startPoint: .center,
                 endPoint: .bottom
             )
 
             VStack(alignment: .leading, spacing: 12) {
                 Text(title)
-                    .font(.system(size: 34, weight: .bold))
+                    .font(.system(size: 36, weight: .heavy))
                     .foregroundStyle(.white)
                     .lineLimit(3)
                     .minimumScaleFactor(0.75)
@@ -240,12 +255,11 @@ private struct DetailHeroView: View {
                 if !meta.isEmpty {
                     Text(meta)
                         .font(.subheadline)
-                        .foregroundStyle(Theme.muted)
+                        .foregroundStyle(.white.opacity(0.75))
                         .lineLimit(2)
                 }
 
                 ratingRow
-
                 actionRow
 
                 if let downloadSpec {
@@ -290,7 +304,7 @@ private struct DetailHeroView: View {
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(.white)
                         .frame(width: 48, height: 48)
-                        .background(Color.white.opacity(0.16))
+                        .background(.ultraThinMaterial)
                         .clipShape(Circle())
                 }
                 .accessibilityLabel("Play trailer")
@@ -301,7 +315,7 @@ private struct DetailHeroView: View {
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.white)
                     .frame(width: 48, height: 48)
-                    .background(Color.white.opacity(0.16))
+                    .background(.ultraThinMaterial)
                     .clipShape(Circle())
             }
             .disabled(watchlistBusy)
@@ -331,14 +345,6 @@ private struct DetailBodySections: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
-            if let synopsis {
-                DetailSynopsisView(text: synopsis)
-            }
-
-            if hasTrailer {
-                DetailTrailersSection(imageURLs: trailerImageURLs, onPlay: onPlayTrailer)
-            }
-
             if !seasons.isEmpty {
                 DetailEpisodesSection(
                     seasons: seasons,
@@ -346,6 +352,18 @@ private struct DetailBodySections: View {
                     seriesContentId: seriesContentId,
                     contentType: contentType,
                     onPlayEpisode: onPlayEpisode
+                )
+            }
+
+            if hasTrailer {
+                DetailTrailersSection(imageURLs: trailerImageURLs, onPlay: onPlayTrailer)
+            }
+
+            if let synopsis {
+                DetailAboutSection(
+                    title: seriesTitle,
+                    synopsis: synopsis,
+                    contentType: contentType
                 )
             }
 
@@ -457,6 +475,65 @@ private struct DetailTrailersSection: View {
     }
 }
 
+private struct DetailAboutSection: View {
+    let title: String
+    let synopsis: String
+    let contentType: String?
+    @State private var expanded = false
+
+    private let previewLimit = 180
+
+    private var needsExpansion: Bool { synopsis.count > previewLimit }
+
+    private var displayedText: String {
+        guard needsExpansion, !expanded else { return synopsis }
+        let end = synopsis.index(synopsis.startIndex, offsetBy: previewLimit, limitedBy: synopsis.endIndex) ?? synopsis.endIndex
+        var snippet = String(synopsis[..<end])
+        if let lastSpace = snippet.lastIndex(of: " ") {
+            snippet = String(snippet[..<lastSpace])
+        }
+        return snippet.trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("About")
+                .font(.title3.bold())
+                .foregroundStyle(Theme.foreground)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                if let contentType, !contentType.isEmpty {
+                    Text(contentType.replacingOccurrences(of: "_", with: " ").uppercased())
+                        .font(.caption.weight(.semibold))
+                        .tracking(1)
+                        .foregroundStyle(Theme.muted)
+                }
+                Text(displayedText)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineSpacing(3)
+                if needsExpansion {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                    } label: {
+                        Text(expanded ? "LESS" : "MORE")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Theme.muted)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+    }
+}
+
 private struct DetailEpisodesSection: View {
     let seasons: [Season]
     let seriesTitle: String
@@ -464,113 +541,115 @@ private struct DetailEpisodesSection: View {
     let contentType: String?
     let onPlayEpisode: (String) -> Void
 
+    @State private var selectedSeasonIndex = 0
+
+    private var selectedSeason: Season? {
+        guard seasons.indices.contains(selectedSeasonIndex) else { return seasons.first }
+        return seasons[selectedSeasonIndex]
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Episodes")
-                .font(.title3.bold())
-                .foregroundStyle(Theme.foreground)
-
-            ForEach(seasons, id: \.stableId) { season in
-                DetailSeasonBlock(
-                    season: season,
-                    seriesTitle: seriesTitle,
-                    seriesContentId: seriesContentId,
-                    contentType: contentType,
-                    onPlayEpisode: onPlayEpisode
-                )
+            Menu {
+                ForEach(Array(seasons.enumerated()), id: \.element.stableId) { idx, season in
+                    Button("Season \(season.seasonNumber ?? idx + 1)") {
+                        selectedSeasonIndex = idx
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Season \(selectedSeason?.seasonNumber ?? 1)")
+                        .font(.title3.bold())
+                        .foregroundStyle(Theme.foreground)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Theme.muted)
+                }
             }
-        }
-    }
-}
 
-private struct DetailSeasonBlock: View {
-    let season: Season
-    let seriesTitle: String
-    let seriesContentId: String
-    let contentType: String?
-    let onPlayEpisode: (String) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Season \(season.seasonNumber ?? 1)")
-                .font(.headline)
-                .foregroundStyle(Theme.accentGold)
-
-            ForEach(season.episodes ?? []) { episode in
-                DetailEpisodeRow(
-                    episode: episode,
-                    downloadSpec: DownloadSpec(
-                        contentId: seriesContentId,
-                        episodeId: episode.id,
-                        title: seriesTitle,
-                        subtitle: "S\(season.seasonNumber ?? 1) E\(episode.episodeNumber ?? 0) · \(episode.title ?? "Episode")",
-                        posterUrl: episode.thumbnailUrl,
-                        type: contentType,
-                        durationSeconds: episode.duration,
-                        seasonNumber: season.seasonNumber,
-                        episodeNumber: episode.episodeNumber
-                    )
-                ) {
-                    onPlayEpisode(episode.id)
+            if let season = selectedSeason {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(season.episodes ?? []) { episode in
+                            EpisodePosterCard(
+                                episode: episode,
+                                seasonNumber: season.seasonNumber ?? 1,
+                                downloadSpec: DownloadSpec(
+                                    contentId: seriesContentId,
+                                    episodeId: episode.id,
+                                    title: seriesTitle,
+                                    subtitle: "S\(season.seasonNumber ?? 1) E\(episode.episodeNumber ?? 0) · \(episode.title ?? "Episode")",
+                                    posterUrl: episode.thumbnailUrl,
+                                    type: contentType,
+                                    durationSeconds: episode.duration,
+                                    seasonNumber: season.seasonNumber,
+                                    episodeNumber: episode.episodeNumber
+                                ),
+                                onPlay: { onPlayEpisode(episode.id) }
+                            )
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-private struct DetailEpisodeRow: View {
+private struct EpisodePosterCard: View {
     let episode: Episode
+    let seasonNumber: Int
     let downloadSpec: DownloadSpec
     let onPlay: () -> Void
 
-    private var thumbURL: URL? {
-        guard let thumb = episode.thumbnailUrl else { return nil }
-        return MediaURL.resolve(posterUrl: thumb, videoUrl: episode.videoUrl)
+    private var thumbURLs: [URL] {
+        MediaURL.candidates(posterUrl: episode.thumbnailUrl, backdropUrl: nil, videoUrl: episode.videoUrl, preferBackdrop: true)
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             Button(action: onPlay) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.white.opacity(0.08))
-                            .frame(width: 120, height: 68)
-                        if let thumbURL {
-                            RemoteImage(url: thumbURL)
-                                .frame(width: 120, height: 68)
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                        } else {
-                            Image(systemName: "play.fill")
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("\(episode.episodeNumber ?? 0). \(episode.title ?? "Episode")")
+                ZStack(alignment: .bottomLeading) {
+                    RemoteImage(urls: thumbURLs)
+                        .frame(width: 220, height: 124)
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.75)],
+                        startPoint: .center,
+                        endPoint: .bottom
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("EPISODE \(episode.episodeNumber ?? 0)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white.opacity(0.75))
+                        Text(episode.title ?? "Episode")
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Theme.foreground)
-                            .lineLimit(2)
-                        if let description = episode.description {
-                            Text(description)
-                                .font(.caption)
-                                .foregroundStyle(Theme.muted)
-                                .lineLimit(2)
-                        }
-                        if let duration = episode.duration, duration > 0 {
-                            Text("\(duration) min")
-                                .font(.caption2)
-                                .foregroundStyle(Theme.muted)
-                        }
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
                     }
-                    Spacer(minLength: 0)
+                    .padding(10)
                 }
-                .padding(.vertical, 4)
+                .frame(width: 220, height: 124)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
 
-            DownloadButton(spec: downloadSpec, style: .icon)
-                .frame(width: 40)
+            if let description = episode.description, !description.isEmpty {
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(Theme.muted)
+                    .lineLimit(2)
+                    .frame(width: 220, alignment: .leading)
+            }
+
+            HStack {
+                if let duration = episode.duration, duration > 0 {
+                    Label("\(duration)m", systemImage: "play.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                Spacer()
+                DownloadButton(spec: downloadSpec, style: .icon)
+            }
+            .frame(width: 220)
         }
     }
 }

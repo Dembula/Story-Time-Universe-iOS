@@ -45,7 +45,6 @@ actor AuthService {
         )
 
         if !(200...299).contains(response.statusCode) && response.statusCode != 302 {
-            // Some NextAuth builds return 200 with URL / error JSON
             if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let error = obj["error"] as? String {
                 throw APIError.server(error == "CredentialsSignin" ? "Invalid email or password." : error)
@@ -64,6 +63,43 @@ actor AuthService {
         return session
     }
 
+    /// Creates a viewer account via production `POST /api/auth/signup`, then signs in.
+    func signUp(email: String, password: String, name: String?) async throws -> AuthSession {
+        var body: [String: Any] = [
+            "email": email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            "password": password,
+        ]
+        if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            body["name"] = name
+        }
+        let (data, response) = try await api.request(
+            path: "api/auth/signup",
+            method: "POST",
+            jsonBody: body
+        )
+        guard (200...299).contains(response.statusCode) else {
+            throw api.parseAPIError(data: data, status: response.statusCode)
+        }
+        return try await signIn(email: email, password: password)
+    }
+
+    /// App Store requirement — `POST /api/account/delete` with confirmation phrase DELETE.
+    func deleteAccount(password: String, confirmation: String = "DELETE") async throws {
+        let body: [String: Any] = [
+            "confirmation": confirmation,
+            "password": password,
+        ]
+        let (data, response) = try await api.request(
+            path: "api/account/delete",
+            method: "POST",
+            jsonBody: body
+        )
+        guard (200...299).contains(response.statusCode) else {
+            throw api.parseAPIError(data: data, status: response.statusCode)
+        }
+        api.clearCookies()
+    }
+
     func signOut() async {
         if let csrfData = try? await api.request(path: "api/auth/csrf").0,
            let csrf = try? api.decode(CSRFResponse.self, from: csrfData) {
@@ -78,5 +114,10 @@ actor AuthService {
             )
         }
         api.clearCookies()
+    }
+
+    /// After in-app Safari/Web auth flow, re-read cookie session.
+    func adoptWebSession() async throws -> AuthSession? {
+        try await fetchSession()
     }
 }

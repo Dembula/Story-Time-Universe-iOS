@@ -90,6 +90,9 @@ final class DownloadManager: NSObject, ObservableObject {
     // MARK: - Start / cancel / delete
 
     func startDownload(_ spec: DownloadSpec) {
+        if ParentalControls.shared.blockDownloads {
+            return
+        }
         let key = spec.key
         if let existing = records[key], existing.state == .completed || existing.state == .downloading || existing.state == .queued {
             return

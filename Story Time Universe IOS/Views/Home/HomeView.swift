@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var appState: AppState
+    @ObservedObject private var parental = ParentalControls.shared
     @State private var featured: [ContentItem] = []
     @State private var continueWatching: [ContinueWatchingItem] = []
     @State private var trending: [ContentItem] = []
@@ -14,52 +15,86 @@ struct HomeView: View {
     @State private var isLoadInFlight = false
     @State private var queuedForceReload = false
 
+    private var profileAge: Int? { appState.activeProfile?.age }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    header
-
-                    if isLoading {
-                        ProgressView()
-                            .tint(Theme.accent)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 80)
-                    } else {
-                        if !featured.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Full-bleed hero to the top edge (Apple TV style)
+                    ZStack(alignment: .top) {
+                        if isLoading {
+                            Color.black
+                                .frame(height: min(UIScreen.main.bounds.height * 0.55, 480))
+                                .overlay { ProgressView().tint(Theme.accent) }
+                        } else if !featured.isEmpty {
                             HeroCarousel(
                                 items: featured,
                                 index: $heroIndex,
+                                fullBleed: true,
                                 onPlay: { playingContent = $0 },
                                 onOpen: { selectedContent = $0 }
                             )
+                        } else {
+                            Color.black.frame(height: 220)
                         }
 
-                        if !continueWatching.isEmpty {
-                            ContinueWatchingRow(items: continueWatching) { item in
-                                playingContent = item.asContentItem
+                        // Floating HOME + profile over hero
+                        HStack {
+                            Text("Home")
+                                .font(.largeTitle.bold())
+                                .foregroundStyle(.white)
+                                .shadow(color: .black.opacity(0.55), radius: 8, y: 2)
+                            Spacer()
+                            Button {
+                                appState.switchProfile()
+                            } label: {
+                                ZStack {
+                                    Circle()
+                                        .fill(Theme.profileColor(for: appState.activeProfile?.id ?? "x"))
+                                        .frame(width: 36, height: 36)
+                                        .overlay(Circle().stroke(Color.white.opacity(0.35), lineWidth: 1))
+                                    Text(String((appState.activeProfile?.name ?? "?").prefix(1)).uppercased())
+                                        .font(.subheadline.bold())
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                            .accessibilityLabel("Switch profile")
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 8)
+                    }
+
+                    VStack(alignment: .leading, spacing: 28) {
+                        if !isLoading {
+                            if !continueWatching.isEmpty {
+                                ContinueWatchingRow(items: continueWatching) { item in
+                                    playingContent = item.asContentItem
+                                }
+                            }
+
+                            ContentRowView(title: "Trending Now", items: trending) { selectedContent = $0 }
+
+                            ForEach(catalogRows.filter(\.shouldDisplay)) { row in
+                                ContentRowView(
+                                    title: row.title,
+                                    items: row.items
+                                ) { selectedContent = $0 }
                             }
                         }
 
-                        ContentRowView(title: "Trending Now", items: trending) { selectedContent = $0 }
-
-                        ForEach(catalogRows.filter(\.shouldDisplay)) { row in
-                            ContentRowView(
-                                title: row.title,
-                                items: row.items
-                            ) { selectedContent = $0 }
+                        if let errorMessage {
+                            Text(errorMessage)
+                                .font(.footnote)
+                                .foregroundStyle(.red.opacity(0.9))
+                                .padding(.horizontal, 20)
                         }
                     }
-
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red.opacity(0.9))
-                            .padding(.horizontal)
-                    }
+                    .padding(.top, 22)
+                    .padding(.bottom, 40)
                 }
-                .padding(.bottom, 32)
             }
+            .ignoresSafeArea(edges: .top)
             .background(Theme.background.ignoresSafeArea())
             .navigationBarHidden(true)
             .refreshable { await load(force: true) }
@@ -76,33 +111,11 @@ struct HomeView: View {
         }
     }
 
-    private var header: some View {
-        HStack {
-            Text("Home")
-                .font(.largeTitle.bold())
-                .foregroundStyle(Theme.foreground)
-            Spacer()
-            Button {
-                appState.switchProfile()
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(Theme.profileColor(for: appState.activeProfile?.id ?? "x"))
-                        .frame(width: 36, height: 36)
-                    Text(String((appState.activeProfile?.name ?? "?").prefix(1)).uppercased())
-                        .font(.subheadline.bold())
-                        .foregroundStyle(.white)
-                }
-            }
-            .accessibilityLabel("Switch profile")
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 8)
+    private func applyFilters(_ items: [ContentItem]) -> [ContentItem] {
+        parental.filter(items, profileAge: profileAge)
     }
 
     private func load(force: Bool) async {
-        // A hard pull can trigger overlapping refresh requests. Serialize loads so a stale
-        // or failed request can't overwrite a successful one and leave Home "stuck."
         if isLoadInFlight {
             if force { queuedForceReload = true }
             return
@@ -133,21 +146,27 @@ struct HomeView: View {
 
         let typeResults = await fetchAllTypeRows()
 
-        let f = (try? await featuredReq) ?? []
-        let t = (try? await trendingReq) ?? []
+        let f = applyFilters((try? await featuredReq) ?? [])
+        let t = applyFilters((try? await trendingReq) ?? [])
         let cw = (try? await continueReq) ?? []
-        let discoveredRows = mergeDiscoveredTypes(knownRows: typeResults, sample: t + f)
+        let rows = typeResults.map { row in
+            HomeCatalogRow(
+                id: row.id,
+                typeValue: row.typeValue,
+                title: row.title,
+                items: applyFilters(row.items),
+                reserveEmptySlot: row.reserveEmptySlot
+            )
+        }
+        let discoveredRows = mergeDiscoveredTypes(knownRows: rows, sample: t + f)
         let hasFreshData = !f.isEmpty || !t.isEmpty || discoveredRows.contains(where: { !$0.items.isEmpty })
 
-        // If refresh fails and returns empty payloads, keep the previous good catalogue
-        // instead of replacing UI with a permanent empty/error state.
         if hasFreshData || (featured.isEmpty && trending.isEmpty && catalogRows.isEmpty) {
             featured = f.isEmpty ? Array(t.prefix(5)) : f
             trending = t
             continueWatching = cw
             catalogRows = discoveredRows
         } else if !cw.isEmpty {
-            // Continue watching can still update independently.
             continueWatching = cw
         }
 
@@ -157,6 +176,10 @@ struct HomeView: View {
             trending: trending,
             catalogRows: catalogRows
         )
+
+        // Warm first few playable titles for seamless play.
+        let warmIds = (featured + trending).prefix(6).map(\.id)
+        await PlaybackWarmCache.shared.warmMany(contentIds: Array(warmIds))
 
         if featured.isEmpty && trending.isEmpty && catalogRows.allSatisfy(\.items.isEmpty) {
             errorMessage = "Could not load the catalogue. Pull to refresh."
@@ -189,7 +212,6 @@ struct HomeView: View {
         }
     }
 
-    /// If the API returns a type we don't list yet, add a row automatically.
     private func mergeDiscoveredTypes(knownRows: [HomeCatalogRow], sample: [ContentItem]) -> [HomeCatalogRow] {
         var rows = knownRows
         let known = CatalogueTypes.allTrackedTypeValues

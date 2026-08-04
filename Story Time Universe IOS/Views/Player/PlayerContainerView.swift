@@ -2,6 +2,7 @@ import AVFoundation
 import AVKit
 import Combine
 import SwiftUI
+import UIKit
 
 struct PlayerContainerView: View {
     let contentId: String
@@ -24,6 +25,10 @@ struct PlayerContainerView: View {
     @State private var showNextUp = false
     @State private var nextCountdown = 0
     @State private var countdownTask: Task<Void, Never>?
+    @State private var showBrightness = false
+    @State private var brightnessHideTask: Task<Void, Never>?
+    private let hapticLight = UIImpactFeedbackGenerator(style: .light)
+    private let hapticMedium = UIImpactFeedbackGenerator(style: .medium)
 
     var body: some View {
         ZStack {
@@ -64,6 +69,23 @@ struct PlayerContainerView: View {
                         onClose: { close() }
                     )
                     .transition(.opacity)
+                }
+
+                // Brightness appears on long-press left edge — independent of chrome.
+                if showBrightness && !isLocked {
+                    HStack {
+                        BrightnessSlider(brightness: $brightness)
+                            .padding(.leading, 20)
+                            .transition(.opacity.combined(with: .move(edge: .leading)))
+                            .onChange(of: brightness) { _, newValue in
+                                UIScreen.main.brightness = CGFloat(newValue)
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.35)
+                                scheduleBrightnessHide()
+                            }
+                        Spacer()
+                    }
+                    .animation(.easeInOut(duration: 0.22), value: showBrightness)
+                    .allowsHitTesting(true)
                 }
             } else if model.isLoading {
                 ProgressView(isTrailer ? "Loading trailer…" : "Loading…")
@@ -167,9 +189,13 @@ struct PlayerContainerView: View {
 
     private var seekTapLayer: some View {
         HStack(spacing: 0) {
+            // Left third: double-tap rewind · long-press brightness · single tap controls
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { doubleTapSeek(by: -10) }
+                .onLongPressGesture(minimumDuration: 0.35) {
+                    revealBrightness()
+                }
                 .onTapGesture { toggleControls() }
             Color.clear
                 .contentShape(Rectangle())
@@ -204,6 +230,7 @@ struct PlayerContainerView: View {
             HStack {
                 Spacer()
                 Button {
+                    hapticMedium.impactOccurred()
                     isLocked = false
                     showControls(persistent: !model.isPlaying)
                 } label: {
@@ -250,8 +277,10 @@ struct PlayerContainerView: View {
                         .shadow(radius: 4)
                     Spacer()
                     Button {
+                        hapticMedium.impactOccurred()
                         isLocked = true
                         showControls(persistent: false)
+                        showBrightness = false
                     } label: {
                         Image(systemName: "lock.open")
                             .font(.headline.weight(.bold))
@@ -267,7 +296,10 @@ struct PlayerContainerView: View {
                 Spacer()
 
                 HStack(spacing: 48) {
-                    Button { doubleTapSeek(by: -10) } label: {
+                    Button {
+                        model.seek(by: -10)
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    } label: {
                         Image(systemName: "gobackward.10")
                             .font(.system(size: 34, weight: .semibold))
                             .foregroundStyle(.white)
@@ -285,7 +317,10 @@ struct PlayerContainerView: View {
                             .shadow(radius: 8)
                     }
 
-                    Button { doubleTapSeek(by: 10) } label: {
+                    Button {
+                        model.seek(by: 10)
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    } label: {
                         Image(systemName: "goforward.10")
                             .font(.system(size: 34, weight: .semibold))
                             .foregroundStyle(.white)
@@ -299,22 +334,16 @@ struct PlayerContainerView: View {
                     .padding(.horizontal, 24)
                     .padding(.bottom, 28)
             }
-
-            HStack {
-                BrightnessSlider(brightness: $brightness)
-                    .padding(.leading, 20)
-                    .onChange(of: brightness) { _, newValue in
-                        UIScreen.main.brightness = CGFloat(newValue)
-                        showControls(persistent: !model.isPlaying)
-                    }
-                Spacer()
-            }
         }
     }
 
     private func doubleTapSeek(by delta: Double) {
         guard !isLocked else { return }
+        // Double-tap should only show the ±10s badge — not full chrome.
+        controlsVisible = false
+        hideTask?.cancel()
         model.seek(by: delta)
+        hapticMedium.impactOccurred()
         let total = (seekFeedback?.isForward == (delta > 0)) ? (seekFeedback?.total ?? 0) + delta : delta
         withAnimation(.easeInOut(duration: 0.15)) {
             seekFeedback = SeekFeedback(isForward: delta > 0, total: total)
@@ -325,6 +354,24 @@ struct PlayerContainerView: View {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 withAnimation(.easeInOut(duration: 0.2)) { seekFeedback = nil }
+            }
+        }
+    }
+
+    private func revealBrightness() {
+        guard !isLocked else { return }
+        hapticLight.impactOccurred()
+        withAnimation(.easeInOut(duration: 0.2)) { showBrightness = true }
+        scheduleBrightnessHide()
+    }
+
+    private func scheduleBrightnessHide() {
+        brightnessHideTask?.cancel()
+        brightnessHideTask = Task {
+            try? await Task.sleep(nanoseconds: 2_800_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.25)) { showBrightness = false }
             }
         }
     }
