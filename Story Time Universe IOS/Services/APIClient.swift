@@ -90,7 +90,9 @@ final class APIClient {
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.setValue("StoryTimeUniverseiOS/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(DeviceIdentity.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(DeviceIdentity.platform, forHTTPHeaderField: "X-ST-Platform")
+        request.setValue(DeviceIdentity.deviceSummary, forHTTPHeaderField: "X-ST-Device")
         if acceptsJSON {
             request.setValue("application/json", forHTTPHeaderField: "Accept")
         }

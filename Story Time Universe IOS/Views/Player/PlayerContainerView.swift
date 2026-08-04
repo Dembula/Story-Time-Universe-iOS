@@ -852,7 +852,7 @@ final class PlayerViewModel: ObservableObject {
 
     private static func authenticatedAsset(for url: URL) -> AVURLAsset {
         var headers: [String: String] = [
-            "User-Agent": "StoryTimeUniverseiOS/1.0",
+            "User-Agent": DeviceIdentity.userAgent,
             "Accept": "*/*",
         ]
         if let cookies = HTTPCookieStorage.shared.cookies(for: url), !cookies.isEmpty {

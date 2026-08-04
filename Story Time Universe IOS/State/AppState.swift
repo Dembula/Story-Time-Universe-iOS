@@ -82,6 +82,7 @@ final class AppState: ObservableObject {
         APIClient.shared.setViewerProfileCookie(nil)
         activeProfile = nil
         subscription = try? await ViewerAPI.shared.fetchSubscription()
+        await ViewerAPI.shared.reportSessionTelemetry()
         route = .profiles
     }
 
@@ -93,10 +94,11 @@ final class AppState: ObservableObject {
         APIClient.shared.setViewerProfileCookie(nil)
         activeProfile = nil
         subscription = try? await ViewerAPI.shared.fetchSubscription()
+        await ViewerAPI.shared.reportSessionTelemetry()
         route = .profiles
     }
 
-    /// Called after successful browser-based sign-in (cookie handoff).
+    /// Called after successful browser-based sign-up / payment handoff.
     func completeWebAuth() async {
         isBusy = true
         defer { isBusy = false }
@@ -106,6 +108,7 @@ final class AppState: ObservableObject {
                 APIClient.shared.setViewerProfileCookie(nil)
                 activeProfile = nil
                 subscription = try? await ViewerAPI.shared.fetchSubscription()
+                await ViewerAPI.shared.reportSessionTelemetry()
                 route = .profiles
             }
         } catch {
@@ -139,6 +142,7 @@ final class AppState: ObservableObject {
         activeProfile = profile
         APIClient.shared.setViewerProfileCookie(profile.id)
         route = .main
+        Task { await ViewerAPI.shared.reportSessionTelemetry() }
     }
 
     func switchProfile() {

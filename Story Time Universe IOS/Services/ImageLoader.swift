@@ -74,7 +74,7 @@ actor ImageLoader {
         }
 
         var request = URLRequest(url: url)
-        request.setValue("StoryTimeUniverseiOS/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(DeviceIdentity.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("image/avif,image/webp,image/apng,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
         // Per-request timeout — large S3 catalogue art needs headroom.
         request.timeoutInterval = isLikelyLargeAsset(url) ? 90 : 45

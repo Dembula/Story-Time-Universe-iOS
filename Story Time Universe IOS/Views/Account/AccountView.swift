@@ -6,6 +6,7 @@ struct AccountView: View {
     @State private var webDestination: WebDestination?
     @State private var showDelete = false
     @State private var showParental = false
+    @State private var showAgeAssurance = false
 
     private struct WebDestination: Identifiable {
         let id = UUID()
@@ -59,10 +60,10 @@ struct AccountView: View {
                         }
                         settingsRow(
                             title: "Age Assurance",
-                            subtitle: "Profiles use date of birth · current: \(appState.activeProfile?.ageLabel ?? "—")",
+                            subtitle: "How we verify age · current profile: \(appState.activeProfile?.ageLabel ?? "—")",
                             systemImage: "figure.and.child.holdinghands"
                         ) {
-                            appState.switchProfile()
+                            showAgeAssurance = true
                         }
                     }
 
@@ -124,13 +125,16 @@ struct AccountView: View {
                 appState.subscription = try? await ViewerAPI.shared.fetchSubscription()
             }
             .sheet(item: $webDestination) { dest in
-                AuthenticatedWebBrowser(url: dest.url, title: dest.title)
+                AuthenticatedWebBrowser(url: dest.url, title: dest.title, mode: .account)
             }
             .sheet(isPresented: $showParental) {
                 ParentalControlsView()
             }
             .sheet(isPresented: $showDelete) {
                 DeleteAccountView()
+            }
+            .sheet(isPresented: $showAgeAssurance) {
+                AgeAssuranceView()
             }
         }
     }
@@ -434,5 +438,119 @@ struct DeleteAccountView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+// MARK: - Age Assurance (in-app controls for App Store 2.3.6)
+
+struct AgeAssuranceView: View {
+    @EnvironmentObject private var appState: AppState
+    @ObservedObject private var parental = ParentalControls.shared
+    @Environment(\.dismiss) private var dismiss
+
+    private var profile: ViewerProfile? { appState.activeProfile }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    infoCard {
+                        Label("How age is verified", systemImage: "checkmark.shield.fill")
+                            .font(.headline)
+                            .foregroundStyle(Theme.accentGold)
+                        Text("Each profile is created with a date of birth. Story Time uses that age for catalogue eligibility and parental maturity limits on this device.")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.muted)
+                    }
+
+                    infoCard {
+                        Text("Active profile")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.muted)
+                        Text(profile?.name ?? "No profile selected")
+                            .font(.title3.bold())
+                            .foregroundStyle(Theme.foreground)
+                        HStack(spacing: 10) {
+                            badge(profile?.ageLabel ?? "—")
+                            if let age = profile?.age {
+                                badge("Age \(age)")
+                            }
+                        }
+                        if let dob = profile?.dateOfBirth, !dob.isEmpty {
+                            Text("Date of birth on file: \(formatDOB(dob))")
+                                .font(.footnote)
+                                .foregroundStyle(Theme.muted)
+                        }
+                    }
+
+                    infoCard {
+                        Text("Parental maturity gate")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.muted)
+                        Text(parental.isEnabled ? "Enabled · \(parental.maturityLabel)" : "Off — only the profile age limit applies")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(Theme.foreground)
+                        Text("Titles rated above the allowed age are hidden from Home, Search, and related rows while parental controls are on.")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.muted)
+                    }
+
+                    infoCard {
+                        Text("This device")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.muted)
+                        Text(DeviceIdentity.deviceSummary)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Theme.foreground)
+                        Text("Sign-ins and watch activity from this app are reported as iOS so the platform can attribute views correctly.")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.muted)
+                    }
+                }
+                .padding(20)
+            }
+            .background(Theme.background)
+            .navigationTitle("Age Assurance")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func infoCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func badge(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.bold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Theme.accentSoft)
+            .foregroundStyle(Theme.accentGold)
+            .clipShape(Capsule())
+    }
+
+    private func formatDOB(_ raw: String) -> String {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = iso.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) {
+            return d.formatted(date: .abbreviated, time: .omitted)
+        }
+        if raw.count >= 10 {
+            return String(raw.prefix(10))
+        }
+        return raw
     }
 }

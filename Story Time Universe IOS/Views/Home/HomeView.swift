@@ -19,82 +19,62 @@ struct HomeView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    // Full-bleed hero to the top edge (Apple TV style)
-                    ZStack(alignment: .top) {
-                        if isLoading {
-                            Color.black
-                                .frame(height: min(UIScreen.main.bounds.height * 0.55, 480))
-                                .overlay { ProgressView().tint(Theme.accent) }
-                        } else if !featured.isEmpty {
-                            HeroCarousel(
-                                items: featured,
-                                index: $heroIndex,
-                                fullBleed: true,
-                                onPlay: { playingContent = $0 },
-                                onOpen: { selectedContent = $0 }
-                            )
-                        } else {
-                            Color.black.frame(height: 220)
-                        }
-
-                        // Floating HOME + profile over hero
-                        HStack {
-                            Text("Home")
-                                .font(.largeTitle.bold())
-                                .foregroundStyle(.white)
-                                .shadow(color: .black.opacity(0.55), radius: 8, y: 2)
-                            Spacer()
-                            Button {
-                                appState.switchProfile()
-                            } label: {
-                                ZStack {
-                                    Circle()
-                                        .fill(Theme.profileColor(for: appState.activeProfile?.id ?? "x"))
-                                        .frame(width: 36, height: 36)
-                                        .overlay(Circle().stroke(Color.white.opacity(0.35), lineWidth: 1))
-                                    Text(String((appState.activeProfile?.name ?? "?").prefix(1)).uppercased())
-                                        .font(.subheadline.bold())
-                                        .foregroundStyle(.white)
-                                }
+            ZStack(alignment: .top) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Full-bleed hero (goes under status bar)
+                        Group {
+                            if isLoading {
+                                Color.black
+                                    .frame(height: min(UIScreen.main.bounds.height * 0.58, 500))
+                                    .overlay { ProgressView().tint(Theme.accent) }
+                            } else if !featured.isEmpty {
+                                HeroCarousel(
+                                    items: featured,
+                                    index: $heroIndex,
+                                    fullBleed: true,
+                                    onPlay: { playingContent = $0 },
+                                    onOpen: { selectedContent = $0 }
+                                )
+                            } else {
+                                Color.black.frame(height: 220)
                             }
-                            .accessibilityLabel("Switch profile")
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
-                    }
 
-                    VStack(alignment: .leading, spacing: 28) {
-                        if !isLoading {
-                            if !continueWatching.isEmpty {
-                                ContinueWatchingRow(items: continueWatching) { item in
-                                    playingContent = item.asContentItem
+                        VStack(alignment: .leading, spacing: 28) {
+                            if !isLoading {
+                                if !continueWatching.isEmpty {
+                                    ContinueWatchingRow(items: continueWatching) { item in
+                                        playingContent = item.asContentItem
+                                    }
+                                }
+
+                                ContentRowView(title: "Trending Now", items: trending) { selectedContent = $0 }
+
+                                ForEach(catalogRows.filter(\.shouldDisplay)) { row in
+                                    ContentRowView(
+                                        title: row.title,
+                                        items: row.items
+                                    ) { selectedContent = $0 }
                                 }
                             }
 
-                            ContentRowView(title: "Trending Now", items: trending) { selectedContent = $0 }
-
-                            ForEach(catalogRows.filter(\.shouldDisplay)) { row in
-                                ContentRowView(
-                                    title: row.title,
-                                    items: row.items
-                                ) { selectedContent = $0 }
+                            if let errorMessage {
+                                Text(errorMessage)
+                                    .font(.footnote)
+                                    .foregroundStyle(.red.opacity(0.9))
+                                    .padding(.horizontal, 20)
                             }
                         }
-
-                        if let errorMessage {
-                            Text(errorMessage)
-                                .font(.footnote)
-                                .foregroundStyle(.red.opacity(0.9))
-                                .padding(.horizontal, 20)
-                        }
+                        .padding(.top, 22)
+                        .padding(.bottom, 40)
                     }
-                    .padding(.top, 22)
-                    .padding(.bottom, 40)
                 }
+                .ignoresSafeArea(edges: .top)
+
+                // Home + profile sit BELOW the Dynamic Island / status bar safe area
+                homeChrome
             }
-            .ignoresSafeArea(edges: .top)
             .background(Theme.background.ignoresSafeArea())
             .navigationBarHidden(true)
             .refreshable { await load(force: true) }
@@ -109,6 +89,44 @@ struct HomeView: View {
             }
             .task { await load(force: false) }
         }
+    }
+
+    private var homeChrome: some View {
+        HStack {
+            Text("Home")
+                .font(.largeTitle.bold())
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.55), radius: 8, y: 2)
+            Spacer()
+            Button {
+                appState.switchProfile()
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(Theme.profileColor(for: appState.activeProfile?.id ?? "x"))
+                        .frame(width: 36, height: 36)
+                        .overlay(Circle().stroke(Color.white.opacity(0.35), lineWidth: 1))
+                    Text(String((appState.activeProfile?.name ?? "?").prefix(1)).uppercased())
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.white)
+                }
+            }
+            .accessibilityLabel("Switch profile")
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
+        .background(
+            LinearGradient(
+                colors: [.black.opacity(0.55), .black.opacity(0.2), .clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea(edges: .top)
+            .allowsHitTesting(false)
+        )
+        // Overlay is laid out inside the safe area unless we ignore it — keep default safe area.
     }
 
     private func applyFilters(_ items: [ContentItem]) -> [ContentItem] {

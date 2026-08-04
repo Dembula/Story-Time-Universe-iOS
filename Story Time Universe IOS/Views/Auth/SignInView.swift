@@ -5,21 +5,21 @@ struct SignInView: View {
     @State private var mode: Mode = .signIn
     @State private var email = ""
     @State private var password = ""
-    @State private var name = ""
     @State private var errorMessage: String?
     @State private var showPassword = false
     @State private var glow = false
     @State private var browser: BrowserSheet?
     @FocusState private var focusedField: Field?
 
-    private enum Field { case name, email, password }
+    private enum Field { case email, password }
     private enum Mode: String { case signIn, signUp }
 
     private struct BrowserSheet: Identifiable {
         let id = UUID()
         let url: URL
         let title: String
-        let authenticated: Bool
+        let mode: WebBrowserMode
+        let isSafariOnly: Bool
     }
 
     var body: some View {
@@ -66,7 +66,6 @@ struct SignInView: View {
                             .foregroundStyle(Theme.muted)
                     }
 
-                    // Mode toggle
                     HStack(spacing: 0) {
                         modeTab(.signIn, title: "Sign In")
                         modeTab(.signUp, title: "Sign Up")
@@ -76,117 +75,11 @@ struct SignInView: View {
                     .padding(.horizontal, 28)
 
                     VStack(spacing: 14) {
-                        if mode == .signUp {
-                            fieldCard {
-                                TextField("Name (optional)", text: $name)
-                                    .textContentType(.name)
-                                    .focused($focusedField, equals: .name)
-                                    .foregroundStyle(Theme.foreground)
-                            }
+                        if mode == .signIn {
+                            signInForm
+                        } else {
+                            signUpPrompt
                         }
-
-                        fieldCard {
-                            TextField("Email", text: $email)
-                                .textContentType(.username)
-                                .keyboardType(.emailAddress)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .focused($focusedField, equals: .email)
-                                .foregroundStyle(Theme.foreground)
-                        }
-
-                        fieldCard {
-                            HStack {
-                                Group {
-                                    if showPassword {
-                                        TextField("Password", text: $password)
-                                    } else {
-                                        SecureField("Password", text: $password)
-                                    }
-                                }
-                                .textContentType(mode == .signUp ? .newPassword : .password)
-                                .focused($focusedField, equals: .password)
-                                .foregroundStyle(Theme.foreground)
-
-                                Button { showPassword.toggle() } label: {
-                                    Image(systemName: showPassword ? "eye.slash" : "eye")
-                                        .foregroundStyle(Theme.muted)
-                                }
-                            }
-                        }
-
-                        if mode == .signUp {
-                            Text("Password must be at least 6 characters.")
-                                .font(.caption)
-                                .foregroundStyle(Theme.muted)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-
-                        if let errorMessage {
-                            Text(errorMessage)
-                                .font(.footnote)
-                                .foregroundStyle(.red.opacity(0.95))
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-
-                        Button {
-                            Task { await submit() }
-                        } label: {
-                            Group {
-                                if appState.isBusy {
-                                    ProgressView().tint(.black)
-                                } else {
-                                    Text(mode == .signIn ? "Sign In" : "Create Account")
-                                        .fontWeight(.bold)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(
-                                LinearGradient(
-                                    colors: [Theme.accentGold, Theme.accent],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .foregroundStyle(.black)
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .shadow(color: Theme.accent.opacity(0.35), radius: 16, y: 8)
-                        }
-                        .disabled(appState.isBusy || email.isEmpty || password.isEmpty)
-                        .opacity(email.isEmpty || password.isEmpty ? 0.55 : 1)
-
-                        // In-app Safari View Controller flows (Apple guideline)
-                        VStack(spacing: 10) {
-                            Button {
-                                browser = BrowserSheet(
-                                    url: mode == .signIn ? AppConfig.viewerSignInURL : AppConfig.viewerSignUpURL,
-                                    title: mode == .signIn ? "Sign In" : "Sign Up",
-                                    authenticated: true
-                                )
-                            } label: {
-                                Label(
-                                    mode == .signIn ? "Sign in with secure browser" : "Sign up with secure browser",
-                                    systemImage: "safari"
-                                )
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Theme.accentGold)
-                            }
-
-                            Button {
-                                browser = BrowserSheet(
-                                    url: AppConfig.forgotPasswordURL,
-                                    title: "Reset Password",
-                                    authenticated: false
-                                )
-                            } label: {
-                                Text("Forgot password?")
-                                    .font(.footnote.weight(.medium))
-                                    .foregroundStyle(Theme.muted)
-                            }
-                        }
-                        .padding(.top, 4)
                     }
                     .padding(20)
                     .background(.ultraThinMaterial.opacity(0.9))
@@ -229,18 +122,161 @@ struct SignInView: View {
             }
         }
         .sheet(item: $browser) { item in
-            if item.authenticated {
-                AuthenticatedWebBrowser(url: item.url, title: item.title) {
+            if item.isSafariOnly {
+                SafariView(url: item.url)
+                    .ignoresSafeArea()
+            } else {
+                AuthenticatedWebBrowser(
+                    url: item.url,
+                    title: item.title,
+                    mode: item.mode
+                ) {
                     Task {
                         await appState.completeWebAuth()
                         browser = nil
                     }
                 }
-            } else {
-                SafariView(url: item.url)
-                    .ignoresSafeArea()
             }
         }
+    }
+
+    // MARK: - Sign In (native only — no web browser CTA)
+
+    private var signInForm: some View {
+        VStack(spacing: 14) {
+            fieldCard {
+                TextField("Email", text: $email)
+                    .textContentType(.username)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($focusedField, equals: .email)
+                    .foregroundStyle(Theme.foreground)
+            }
+
+            fieldCard {
+                HStack {
+                    Group {
+                        if showPassword {
+                            TextField("Password", text: $password)
+                        } else {
+                            SecureField("Password", text: $password)
+                        }
+                    }
+                    .textContentType(.password)
+                    .focused($focusedField, equals: .password)
+                    .foregroundStyle(Theme.foreground)
+
+                    Button { showPassword.toggle() } label: {
+                        Image(systemName: showPassword ? "eye.slash" : "eye")
+                            .foregroundStyle(Theme.muted)
+                    }
+                }
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.red.opacity(0.95))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Button {
+                Task { await submitSignIn() }
+            } label: {
+                Group {
+                    if appState.isBusy {
+                        ProgressView().tint(.black)
+                    } else {
+                        Text("Sign In")
+                            .fontWeight(.bold)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(
+                    LinearGradient(
+                        colors: [Theme.accentGold, Theme.accent],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .foregroundStyle(.black)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: Theme.accent.opacity(0.35), radius: 16, y: 8)
+            }
+            .disabled(appState.isBusy || email.isEmpty || password.isEmpty)
+            .opacity(email.isEmpty || password.isEmpty ? 0.55 : 1)
+
+            Button {
+                browser = BrowserSheet(
+                    url: AppConfig.forgotPasswordURL,
+                    title: "Reset Password",
+                    mode: .account,
+                    isSafariOnly: true
+                )
+            } label: {
+                Text("Forgot password?")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Theme.muted)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    // MARK: - Sign Up (in-app web is the natural flow)
+
+    private var signUpPrompt: some View {
+        VStack(spacing: 16) {
+            Text("New accounts are created securely on Story Time — including terms and payment — then you return here to pick a profile.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.muted)
+                .multilineTextAlignment(.center)
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.red.opacity(0.95))
+                    .multilineTextAlignment(.center)
+            }
+
+            Button {
+                openSignUpBrowser()
+            } label: {
+                Label("Continue to Create Account", systemImage: "arrow.up.forward.app.fill")
+                    .font(.headline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(
+                        LinearGradient(
+                            colors: [Theme.accentGold, Theme.accent],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .foregroundStyle(.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .shadow(color: Theme.accent.opacity(0.35), radius: 16, y: 8)
+            }
+
+            Text("You’ll complete terms and payment in a secure window. Stay there until finished — then the app signs you in.")
+                .font(.caption)
+                .foregroundStyle(Theme.muted)
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    private func openSignUpBrowser() {
+        errorMessage = nil
+        // Ensure signup never inherits a prior web session into the app cookie jar.
+        APIClient.shared.clearCookies()
+        browser = BrowserSheet(
+            url: AppConfig.viewerSignUpURLForApp,
+            title: "Create Account",
+            mode: .signUp,
+            isSafariOnly: false
+        )
     }
 
     private func modeTab(_ value: Mode, title: String) -> some View {
@@ -248,6 +284,12 @@ struct SignInView: View {
             withAnimation(.easeInOut(duration: 0.2)) {
                 mode = value
                 errorMessage = nil
+                // Natural signup flow: open web immediately when switching to Sign Up
+                if value == .signUp {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        openSignUpBrowser()
+                    }
+                }
             }
         } label: {
             Text(title)
@@ -269,19 +311,11 @@ struct SignInView: View {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func submit() async {
+    private func submitSignIn() async {
         errorMessage = nil
         focusedField = nil
         do {
-            if mode == .signIn {
-                try await appState.signIn(email: email, password: password)
-            } else {
-                guard password.count >= 6 else {
-                    errorMessage = "Password must be at least 6 characters."
-                    return
-                }
-                try await appState.signUp(email: email, password: password, name: name.isEmpty ? nil : name)
-            }
+            try await appState.signIn(email: email, password: password)
         } catch {
             errorMessage = error.localizedDescription
         }

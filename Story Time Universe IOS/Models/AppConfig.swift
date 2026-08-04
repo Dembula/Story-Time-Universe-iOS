@@ -5,11 +5,14 @@ enum AppConfig {
     static let webBaseURL = URL(string: "https://story-time.online")!
     static let apiBaseURL = webBaseURL
 
-    // MARK: - Auth (opened in-app via Safari View Controller / secure browser)
+    // MARK: - Auth (opened in-app via secure browser)
 
     static let viewerSignInURL = URL(string: "https://story-time.online/auth/signin")!
-    static let viewerSignUpURL = URL(string: "https://story-time.online/auth/signup")!
+    /// Canonical signup entry (terms gate first). source marks iOS so web can adapt later.
+    static let viewerSignUpURLForApp = URL(string: "https://story-time.online/auth/signup?source=ios_app&platform=ios")!
+    static let viewerSignUpURL = viewerSignUpURLForApp
     static let forgotPasswordURL = URL(string: "https://story-time.online/auth/forgot-password")!
+    static let packageOnboardingURL = URL(string: "https://story-time.online/onboarding/package")!
 
     // MARK: - Account management web paths (AuthenticatedWebBrowser — cookie session)
 

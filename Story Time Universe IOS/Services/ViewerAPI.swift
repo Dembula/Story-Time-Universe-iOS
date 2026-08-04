@@ -248,6 +248,42 @@ actor ViewerAPI {
                 "durationSeconds": durationSeconds,
             ]
         )
+        // Extra analytics so admin/creator dashboards can attribute iOS app views.
+        _ = try? await api.request(
+            path: "api/analytics/events",
+            method: "POST",
+            jsonBody: [
+                "name": "watch_session_ios",
+                "path": "/ios/player/\(contentId)",
+                "properties": [
+                    "contentId": contentId,
+                    "durationSeconds": durationSeconds,
+                    "platform": DeviceIdentity.platform,
+                    "device": DeviceIdentity.deviceSummary,
+                    "client": "StoryTimeUniverseiOS",
+                ],
+                "clientTs": ISO8601DateFormatter().string(from: Date()),
+            ]
+        )
+    }
+
+    /// Admin activity log entry (device + UA) — production `POST /api/session/telemetry`.
+    func reportSessionTelemetry() async {
+        _ = try? await api.request(path: "api/session/telemetry", method: "POST", jsonBody: [:])
+        _ = try? await api.request(
+            path: "api/analytics/events",
+            method: "POST",
+            jsonBody: [
+                "name": "app_open_ios",
+                "path": "/ios",
+                "properties": [
+                    "platform": DeviceIdentity.platform,
+                    "device": DeviceIdentity.deviceSummary,
+                    "client": "StoryTimeUniverseiOS",
+                ],
+                "clientTs": ISO8601DateFormatter().string(from: Date()),
+            ]
+        )
     }
 
     func search(query: String) async throws -> [SearchResult] {
