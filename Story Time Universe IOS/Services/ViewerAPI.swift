@@ -216,6 +216,50 @@ actor ViewerAPI {
         return try api.decode(PlaybackBundle.self, from: data)
     }
 
+    /// Pay Per View unlock. Production creates a PENDING access row and returns a PayFast `checkoutUrl`
+    /// when the title is not already owned. When owned, `alreadyOwned` is true and playback can start.
+    func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
+        let (data, response) = try await api.request(
+            path: "api/viewer/ppv",
+            method: "POST",
+            jsonBody: ["contentId": contentId]
+        )
+        if !(200...299).contains(response.statusCode) {
+            throw api.parseAPIError(data: data, status: response.statusCode)
+        }
+        return try api.decode(PpvCheckoutResponse.self, from: data)
+    }
+
+    /// Gate Play for PPV accounts before opening the player.
+    func resolveTitleAccess(contentId: String, isPayPerViewAccount: Bool, isTrailer: Bool) async -> TitleAccessResult {
+        if isTrailer { return .playable }
+        guard isPayPerViewAccount else { return .playable }
+
+        do {
+            let result = try await requestPpvAccess(contentId: contentId)
+            if result.alreadyOwned == true {
+                return .playable
+            }
+            if let url = result.checkoutURL {
+                return .requiresCheckout(url)
+            }
+            // Some backends nest URL under a relative path or return absolute string only on error field.
+            if result.requiresPayment == true || result.success == false {
+                return .blocked(result.error ?? "Complete payment to unlock this title.")
+            }
+            // Unexpected empty success — attempt play; player will re-error if needed.
+            return .playable
+        } catch let error as APIError {
+            // Fall back: if server insists on purchase, still allow play attempt to surface unlock UI.
+            if case .paymentRequired = error {
+                return .blocked(error.localizedDescription)
+            }
+            return .blocked(error.localizedDescription)
+        } catch {
+            return .blocked(error.localizedDescription)
+        }
+    }
+
     func fetchWatchProgress(contentId: String) async throws -> (position: Int, duration: Int?) {
         let (data, response) = try await api.request(
             path: "api/watch/progress",
@@ -327,5 +371,14 @@ actor ViewerAPI {
         let (data, response) = try await api.request(path: "api/viewer/subscription")
         guard response.statusCode == 200 else { return nil }
         return try api.decode(SubscriptionResponse.self, from: data).subscription
+    }
+
+    /// Full account summary (name, email, phone, address, plan, profiles) — `GET /api/viewer/settings`.
+    func fetchViewerSettings() async throws -> ViewerSettingsResponse {
+        let (data, response) = try await api.request(path: "api/viewer/settings")
+        guard response.statusCode == 200 else {
+            throw api.parseAPIError(data: data, status: response.statusCode)
+        }
+        return try api.decode(ViewerSettingsResponse.self, from: data)
     }
 }

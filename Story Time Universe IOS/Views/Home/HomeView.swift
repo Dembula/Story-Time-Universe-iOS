@@ -14,8 +14,83 @@ struct HomeView: View {
     @State private var heroIndex = 0
     @State private var isLoadInFlight = false
     @State private var queuedForceReload = false
+    @State private var isResolvingAccess = false
+    @State private var ppvCheckout: HomePPVCheckout?
+    @State private var pendingPlayItem: ContentItem?
+    @State private var accessError: String?
+    @State private var ppvFinishInFlight = false
+
+    private struct HomePPVCheckout: Identifiable {
+        let id = UUID()
+        let url: URL
+        let contentId: String
+    }
 
     private var profileAge: Int? { appState.activeProfile?.age }
+
+    private func requestPlay(_ item: ContentItem) {
+        Task { await resolveAndPlay(item) }
+    }
+
+    private func resolveAndPlay(_ item: ContentItem) async {
+        if DownloadManager.shared.offlineAsset(contentId: item.id, episodeId: nil) != nil {
+            playingContent = item
+            return
+        }
+        isResolvingAccess = true
+        accessError = nil
+        defer { isResolvingAccess = false }
+
+        if appState.subscription == nil {
+            appState.subscription = try? await ViewerAPI.shared.fetchSubscription()
+        }
+
+        let access = await ViewerAPI.shared.resolveTitleAccess(
+            contentId: item.id,
+            isPayPerViewAccount: appState.isPayPerViewAccount,
+            isTrailer: false
+        )
+        switch access {
+        case .playable:
+            playingContent = item
+        case .requiresCheckout(let url):
+            pendingPlayItem = item
+            ppvCheckout = HomePPVCheckout(url: url, contentId: item.id)
+        case .blocked(let message):
+            accessError = message
+        }
+    }
+
+    private func handlePPVFinished(allowRetryCheckout: Bool) async {
+        guard !ppvFinishInFlight else { return }
+        guard let item = pendingPlayItem else { return }
+        ppvFinishInFlight = true
+        defer { ppvFinishInFlight = false }
+
+        pendingPlayItem = nil
+        ppvCheckout = nil
+        isResolvingAccess = true
+        defer { isResolvingAccess = false }
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        let access = await ViewerAPI.shared.resolveTitleAccess(
+            contentId: item.id,
+            isPayPerViewAccount: true,
+            isTrailer: false
+        )
+        switch access {
+        case .playable:
+            playingContent = item
+            accessError = nil
+        case .requiresCheckout(let url):
+            pendingPlayItem = item
+            accessError = "Complete payment to unlock this title, then press Play again."
+            if allowRetryCheckout {
+                ppvCheckout = HomePPVCheckout(url: url, contentId: item.id)
+            }
+        case .blocked(let message):
+            accessError = message
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -33,7 +108,7 @@ struct HomeView: View {
                                     items: featured,
                                     index: $heroIndex,
                                     fullBleed: true,
-                                    onPlay: { playingContent = $0 },
+                                    onPlay: { requestPlay($0) },
                                     onOpen: { selectedContent = $0 }
                                 )
                             } else {
@@ -45,7 +120,7 @@ struct HomeView: View {
                             if !isLoading {
                                 if !continueWatching.isEmpty {
                                     ContinueWatchingRow(items: continueWatching) { item in
-                                        playingContent = item.asContentItem
+                                        requestPlay(item.asContentItem)
                                     }
                                 }
 
@@ -86,6 +161,36 @@ struct HomeView: View {
                     .onDisappear {
                         OrientationLock.unlockPortrait()
                     }
+            }
+            .sheet(item: $ppvCheckout, onDismiss: {
+                Task { await handlePPVFinished(allowRetryCheckout: false) }
+            }) { sheet in
+                AuthenticatedWebBrowser(
+                    url: sheet.url,
+                    title: "Unlock Title",
+                    mode: .checkout(contentId: sheet.contentId)
+                ) {
+                    Task { await handlePPVFinished(allowRetryCheckout: false) }
+                }
+            }
+            .overlay {
+                if isResolvingAccess {
+                    ZStack {
+                        Color.black.opacity(0.3).ignoresSafeArea()
+                        ProgressView("Checking access…")
+                            .padding(18)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                            .tint(Theme.accent)
+                    }
+                }
+            }
+            .alert("Unable to play", isPresented: Binding(
+                get: { accessError != nil },
+                set: { if !$0 { accessError = nil } }
+            )) {
+                Button("OK", role: .cancel) { accessError = nil }
+            } message: {
+                Text(accessError ?? "")
             }
             .task { await load(force: false) }
         }

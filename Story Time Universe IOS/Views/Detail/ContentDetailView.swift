@@ -10,6 +10,7 @@ struct ContentDetailView: View {
     let contentId: String
     var seed: ContentItem?
 
+    @EnvironmentObject private var appState: AppState
     @State private var detail: ContentDetail?
     @State private var crew: [CrewCredit] = []
     @State private var related: [ContentItem] = []
@@ -19,9 +20,24 @@ struct ContentDetailView: View {
     @State private var watchlistBusy = false
     @State private var selectedRelated: ContentItem?
     @State private var selectedPerson: PersonRoute?
+    @State private var isResolvingAccess = false
+    @State private var ppvCheckout: PPVCheckoutSheet?
+    @State private var pendingPlayback: PlaybackRequest?
+    @State private var ppvFinishInFlight = false
+
+    private struct PPVCheckoutSheet: Identifiable {
+        let id = UUID()
+        let url: URL
+        let contentId: String
+    }
 
     private var displayTitle: String {
         detail?.title ?? seed?.title ?? ""
+    }
+
+    private var playButtonTitle: String {
+        if appState.isPayPerViewAccount { return "Unlock & Play" }
+        return "Play"
     }
 
     private var heroImageURLs: [URL] {
@@ -50,6 +66,7 @@ struct ContentDetailView: View {
                     inWatchlist: inWatchlist,
                     watchlistBusy: watchlistBusy,
                     downloadSpec: filmDownloadSpec,
+                    playLabel: playButtonTitle,
                     onPlay: { startPlayback(trailer: false, episodeId: firstEpisodeId) },
                     onTrailer: { startPlayback(trailer: true, episodeId: nil) },
                     onWatchlist: { Task { await toggleWatchlist() } }
@@ -96,6 +113,31 @@ struct ContentDetailView: View {
             )
             .onDisappear {
                 OrientationLock.unlockPortrait()
+            }
+        }
+        .sheet(item: $ppvCheckout, onDismiss: {
+            // Covers successful auto-close and user Close after paying (if auto-detect was slow).
+            Task { await handlePPVCheckoutFinished(allowRetryCheckout: false) }
+        }) { sheet in
+            AuthenticatedWebBrowser(
+                url: sheet.url,
+                title: "Unlock Title",
+                mode: .checkout(contentId: sheet.contentId)
+            ) {
+                // Auto-dismiss path — onDismiss will also run; handler is idempotent.
+                Task { await handlePPVCheckoutFinished(allowRetryCheckout: false) }
+            }
+        }
+        .overlay {
+            if isResolvingAccess {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                    ProgressView("Checking access…")
+                        .padding(20)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                        .foregroundStyle(.white)
+                        .tint(Theme.accent)
+                }
             }
         }
     }
@@ -163,7 +205,77 @@ struct ContentDetailView: View {
     }
 
     private func startPlayback(trailer: Bool, episodeId: String?) {
-        playbackRequest = PlaybackRequest(episodeId: episodeId, isTrailer: trailer)
+        let request = PlaybackRequest(episodeId: episodeId, isTrailer: trailer)
+        // Trailers never require PPV unlock.
+        if trailer {
+            playbackRequest = request
+            return
+        }
+        // Already downloaded offline.
+        if DownloadManager.shared.offlineAsset(contentId: contentId, episodeId: episodeId) != nil {
+            playbackRequest = request
+            return
+        }
+
+        Task {
+            isResolvingAccess = true
+            defer { isResolvingAccess = false }
+            errorMessage = nil
+
+            // Subscription refresh so PPV model flag is current.
+            if appState.subscription == nil {
+                appState.subscription = try? await ViewerAPI.shared.fetchSubscription()
+            }
+
+            let access = await ViewerAPI.shared.resolveTitleAccess(
+                contentId: contentId,
+                isPayPerViewAccount: appState.isPayPerViewAccount,
+                isTrailer: false
+            )
+
+            switch access {
+            case .playable:
+                playbackRequest = request
+            case .requiresCheckout(let url):
+                pendingPlayback = request
+                ppvCheckout = PPVCheckoutSheet(url: url, contentId: contentId)
+            case .blocked(let message):
+                errorMessage = message
+            }
+        }
+    }
+
+    private func handlePPVCheckoutFinished(allowRetryCheckout: Bool) async {
+        // Single-flight: avoid onDismiss + auto-close racing.
+        guard !ppvFinishInFlight else { return }
+        guard let pending = pendingPlayback else { return }
+        ppvFinishInFlight = true
+        defer { ppvFinishInFlight = false }
+
+        pendingPlayback = nil
+        ppvCheckout = nil
+        isResolvingAccess = true
+        defer { isResolvingAccess = false }
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+
+        let access = await ViewerAPI.shared.resolveTitleAccess(
+            contentId: contentId,
+            isPayPerViewAccount: true,
+            isTrailer: false
+        )
+        switch access {
+        case .playable:
+            playbackRequest = pending
+            errorMessage = nil
+        case .requiresCheckout(let url):
+            pendingPlayback = pending
+            errorMessage = "Complete payment to unlock this title, then press Play again."
+            if allowRetryCheckout {
+                ppvCheckout = PPVCheckoutSheet(url: url, contentId: contentId)
+            }
+        case .blocked(let message):
+            errorMessage = message
+        }
     }
 
     private func load() async {
@@ -223,6 +335,7 @@ private struct DetailHeroView: View {
     let inWatchlist: Bool
     let watchlistBusy: Bool
     let downloadSpec: DownloadSpec?
+    let playLabel: String
     let onPlay: () -> Void
     let onTrailer: () -> Void
     let onWatchlist: () -> Void
@@ -289,7 +402,7 @@ private struct DetailHeroView: View {
     private var actionRow: some View {
         HStack(spacing: 12) {
             Button(action: onPlay) {
-                Label("Play", systemImage: "play.fill")
+                Label(playLabel, systemImage: "play.fill")
                     .font(.headline)
                     .foregroundStyle(.black)
                     .frame(maxWidth: .infinity)

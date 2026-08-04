@@ -46,8 +46,10 @@ struct OfflineDownloadsGate: View {
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Sign In") {
-                            appState.route = .signIn
+                        if NetworkMonitor.shared.isOnline {
+                            Button("Sign In") {
+                                appState.route = .signIn
+                            }
                         }
                     }
                 }
@@ -60,6 +62,9 @@ struct OfflineDownloadsGate: View {
                             .padding(.vertical, 8)
                             .background(Theme.accent.opacity(0.9))
                     }
+                }
+                .onAppear {
+                    DownloadManager.shared.validateOfflineLibrary()
                 }
         }
     }

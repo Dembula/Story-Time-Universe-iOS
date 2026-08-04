@@ -6,10 +6,9 @@ enum MainTab: Hashable {
 
 struct MainTabView: View {
     @EnvironmentObject private var appState: AppState
-    @State private var tab: MainTab = .home
 
     var body: some View {
-        TabView(selection: $tab) {
+        TabView(selection: $appState.selectedMainTab) {
             HomeView()
                 .tabItem { Label("Home", systemImage: "house.fill") }
                 .tag(MainTab.home)

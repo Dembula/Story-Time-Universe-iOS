@@ -19,6 +19,8 @@ final class AppState: ObservableObject {
     @Published var subscription: ViewerSubscription?
     @Published var bootstrapError: String?
     @Published var isBusy = false
+    /// Shared main tab selection so Account can jump to Downloads, Home, etc.
+    @Published var selectedMainTab: MainTab = .home
 
     private let network = NetworkMonitor.shared
 
@@ -33,7 +35,9 @@ final class AppState: ObservableObject {
         let splashStarted = ContinuousClock.now
         let minimumSplash: Duration = .milliseconds(2800)
 
-        // Offline-first: if we have downloads and no network, go straight to offline library.
+        // Offline-first: wait for real path status, then jump to downloads if needed.
+        await network.waitForInitialPath()
+        DownloadManager.shared.validateOfflineLibrary()
         if !network.isOnline && !DownloadManager.shared.completedRecords.isEmpty {
             await waitRemainingSplash(from: splashStarted, minimum: minimumSplash)
             route = .offlineDownloads
@@ -41,7 +45,9 @@ final class AppState: ObservableObject {
         }
 
         do {
-            let session = try await AuthService.shared.fetchSession()
+            let session = try await withTimeout(seconds: 10) {
+                try await AuthService.shared.fetchSession()
+            }
             self.session = session
             if session?.user != nil {
                 subscription = try? await ViewerAPI.shared.fetchSubscription()
@@ -50,7 +56,7 @@ final class AppState: ObservableObject {
 
             if session?.user != nil {
                 route = .profiles
-            } else if !network.isOnline && !DownloadManager.shared.completedRecords.isEmpty {
+            } else if !DownloadManager.shared.completedRecords.isEmpty && !network.isOnline {
                 route = .offlineDownloads
             } else {
                 route = .signIn
@@ -59,11 +65,32 @@ final class AppState: ObservableObject {
             session = nil
             bootstrapError = error.localizedDescription
             await waitRemainingSplash(from: splashStarted, minimum: minimumSplash)
-            if !network.isOnline && !DownloadManager.shared.completedRecords.isEmpty {
+            // Prefer offline library whenever we have playable downloads and session failed
+            // (airplane mode, captive portal, timeout, API down).
+            if !DownloadManager.shared.completedRecords.isEmpty,
+               !network.isOnline || (error as? APIError).map({
+                   if case .network = $0 { return true }
+                   return false
+               }) == true {
+                route = .offlineDownloads
+            } else if !DownloadManager.shared.completedRecords.isEmpty && !network.isOnline {
                 route = .offlineDownloads
             } else {
                 route = .signIn
             }
+        }
+    }
+
+    private func withTimeout<T>(seconds: Double, operation: @escaping () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw APIError.network("Connection timed out.")
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
         }
     }
 
@@ -156,6 +183,18 @@ final class AppState: ObservableObject {
         route = .offlineDownloads
     }
 
+    /// Switch to the in-app Downloads tab (or offline library when completely offline).
+    func openDownloads() {
+        if !NetworkMonitor.shared.isOnline && !DownloadManager.shared.completedRecords.isEmpty {
+            openOfflineLibrary()
+            return
+        }
+        if route != .main {
+            route = .main
+        }
+        selectedMainTab = .downloads
+    }
+
     func leaveOfflineLibrary() {
         if session?.user != nil {
             route = activeProfile != nil ? .main : .profiles
@@ -167,5 +206,10 @@ final class AppState: ObservableObject {
     var needsPaymentAttention: Bool {
         guard let status = subscription?.status?.uppercased() else { return false }
         return ["PAST_DUE", "CANCELED", "CANCELLED", "EXPIRED"].contains(status)
+    }
+
+    /// Pay-per-title accounts unlock films via web checkout when pressing Play / Watch.
+    var isPayPerViewAccount: Bool {
+        subscription?.isPayPerViewModel == true
     }
 }

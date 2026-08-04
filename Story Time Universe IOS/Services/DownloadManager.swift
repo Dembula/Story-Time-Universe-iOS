@@ -51,6 +51,7 @@ final class DownloadManager: NSObject, ObservableObject {
         fileSession = URLSession(configuration: fileConfig, delegate: self, delegateQueue: .main)
 
         loadRecords()
+        validateOfflineLibrary()
         reconnectInFlightTasks()
     }
 
@@ -228,9 +229,12 @@ final class DownloadManager: NSObject, ObservableObject {
         else { return }
         var map: [String: DownloadRecord] = [:]
         for var record in decoded {
-            // Any download interrupted by a crash/relaunch that never finished is marked failed
-            // unless the background session reattaches to it below.
+            // Interrupted transfers are failed until a background session reattaches.
             if record.state == .downloading || record.state == .queued {
+                record.state = .failed
+            }
+            // Completed without a readable file cannot be played offline.
+            if record.state == .completed, record.localURL == nil {
                 record.state = .failed
             }
             map[record.key] = record
@@ -266,6 +270,20 @@ final class DownloadManager: NSObject, ObservableObject {
             self.saveRecords()
         }
     }
+
+    /// Re-check files on disk (call after launch / before offline library).
+    func validateOfflineLibrary() {
+        var changed = false
+        for (key, record) in records where record.state == .completed {
+            if record.localURL == nil {
+                var fixed = record
+                fixed.state = .failed
+                records[key] = fixed
+                changed = true
+            }
+        }
+        if changed { saveRecords() }
+    }
 }
 
 // MARK: - AVAssetDownloadDelegate (HLS)
@@ -276,11 +294,12 @@ extension DownloadManager: AVAssetDownloadDelegate {
         assetDownloadTask: AVAssetDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
-        let relative = location.relativePath
         let identifier = assetDownloadTask.taskIdentifier
         Task { @MainActor in
             guard let key = self.avTaskKeys[identifier] else { return }
-            self.update(key: key) { $0.relativePath = relative }
+            self.update(key: key) {
+                $0.relativePath = DownloadRecord.storagePath(for: location.standardizedFileURL)
+            }
             self.saveRecords()
         }
     }
@@ -332,7 +351,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
         } catch {
             moved = false
         }
-        let relative = moved ? Self.relativePath(for: dest) : nil
+        let relative = moved ? DownloadRecord.storagePath(for: dest) : nil
         Task { @MainActor in
             guard let key = self.fileTaskKeys[identifier] else { return }
             self.update(key: key) {
@@ -362,15 +381,6 @@ extension DownloadManager: URLSessionDownloadDelegate {
                 if $0.state == .queued { $0.state = .downloading }
             }
         }
-    }
-
-    private nonisolated static func relativePath(for url: URL) -> String {
-        let home = NSHomeDirectory()
-        let path = url.path
-        if path.hasPrefix(home) {
-            return String(path.dropFirst(home.count).drop(while: { $0 == "/" }))
-        }
-        return path
     }
 }
 
@@ -413,8 +423,9 @@ extension DownloadManager: URLSessionTaskDelegate {
 
             self.update(key: key) { record in
                 if record.relativePath != nil {
-                    record.state = .completed
                     record.progress = 1
+                    // Require the file to still be on disk.
+                    record.state = record.localURL != nil ? .completed : .failed
                 } else {
                     record.state = .failed
                 }

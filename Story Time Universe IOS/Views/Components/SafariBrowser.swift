@@ -27,6 +27,8 @@ enum WebBrowserMode {
     case account
     /// Fresh signup — no prior cookies, blocks “Back to home”, only finishes after real app destinations.
     case signUp
+    /// Pay-per-view / unlock checkout (PayFast etc.). Injects session, allows external payment hosts.
+    case checkout(contentId: String)
 }
 
 /// Secure in-app browser showing host/HTTPS, with cookie sync for account pages
@@ -35,12 +37,28 @@ struct AuthenticatedWebBrowser: View {
     let url: URL
     var title: String = "Story Time"
     var mode: WebBrowserMode = .account
+    /// Called when signup handoff completes, or when PPV checkout returns successfully.
     var onSessionEstablished: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var pageTitle: String = ""
     @State private var currentHost: String = ""
     @State private var statusHint: String = ""
+
+    private var showsHintBar: Bool {
+        switch mode {
+        case .signUp, .checkout: return !statusHint.isEmpty
+        case .account: return false
+        }
+    }
+
+    private var cancelLabel: String {
+        switch mode {
+        case .signUp: return "Cancel"
+        case .checkout: return "Close"
+        case .account: return "Done"
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -59,7 +77,7 @@ struct AuthenticatedWebBrowser: View {
                 .padding(.vertical, 8)
                 .background(Color.white.opacity(0.06))
 
-                if mode == .signUp, !statusHint.isEmpty {
+                if showsHintBar {
                     Text(statusHint)
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(Theme.accentGold)
@@ -77,6 +95,12 @@ struct AuthenticatedWebBrowser: View {
                     statusHint: $statusHint,
                     onSessionEstablished: {
                         onSessionEstablished?()
+                        switch mode {
+                        case .signUp, .checkout:
+                            dismiss()
+                        case .account:
+                            break
+                        }
                     }
                 )
             }
@@ -85,13 +109,21 @@ struct AuthenticatedWebBrowser: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(mode == .signUp ? "Cancel" : "Done") { dismiss() }
+                    Button(cancelLabel) { dismiss() }
                         .foregroundStyle(Theme.accent)
                 }
             }
         }
         .preferredColorScheme(.dark)
-        .interactiveDismissDisabled(mode == .signUp)
+        .interactiveDismissDisabled({
+            if case .signUp = mode { return true }
+            return false
+        }())
+        .onAppear {
+            if case .checkout = mode {
+                statusHint = "Complete payment to unlock this title, then you’ll return to watch."
+            }
+        }
     }
 }
 
@@ -110,21 +142,28 @@ private struct AuthWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         // Sign-up must not reuse someone else's cookies / WebsiteDataStore.
-        config.websiteDataStore = mode == .signUp ? .nonPersistent() : .default()
+        let isSignUp: Bool = {
+            if case .signUp = mode { return true }
+            return false
+        }()
+        config.websiteDataStore = isSignUp ? .nonPersistent() : .default()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         config.applicationNameForUserAgent = "StoryTimeUniverseiOS"
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = DeviceIdentity.userAgent
         webView.navigationDelegate = context.coordinator
-        webView.allowsBackForwardNavigationGestures = mode != .signUp
+        webView.allowsBackForwardNavigationGestures = !isSignUp
         webView.backgroundColor = .black
         webView.isOpaque = false
         webView.scrollView.backgroundColor = .black
 
         Task {
-            if mode == .account {
+            switch mode {
+            case .account, .checkout:
                 await CookieBridge.injectSharedCookies(into: webView.configuration.websiteDataStore)
+            case .signUp:
+                break
             }
             await MainActor.run {
                 var request = URLRequest(url: url)
@@ -149,13 +188,17 @@ private struct AuthWebView: UIViewRepresentable {
             parent.pageTitle = webView.title ?? ""
             parent.currentHost = webView.url?.host ?? ""
 
-            if parent.mode == .signUp {
+            if case .signUp = parent.mode {
                 injectSignupUICleanup(webView)
                 updateSignupHint(for: webView.url)
             }
+            if case .checkout = parent.mode {
+                updateCheckoutHint(for: webView.url)
+            }
 
             Task {
-                if parent.mode == .account || parent.mode == .signUp {
+                switch parent.mode {
+                case .account, .signUp, .checkout:
                     await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
                 }
                 await checkSessionSuccess(webView)
@@ -173,10 +216,9 @@ private struct AuthWebView: UIViewRepresentable {
             }
             parent.currentHost = url.host ?? parent.currentHost
 
-            if parent.mode == .signUp {
+            if case .signUp = parent.mode {
                 if shouldBlockSignupNavigation(url) {
                     decisionHandler(.cancel)
-                    // Keep the user inside the signup funnel
                     webView.load(URLRequest(url: AppConfig.viewerSignUpURLForApp))
                     return
                 }
@@ -247,36 +289,69 @@ private struct AuthWebView: UIViewRepresentable {
             }
         }
 
+        private func updateCheckoutHint(for url: URL?) {
+            guard let url else { return }
+            let path = url.path.lowercased()
+            let host = url.host?.lowercased() ?? ""
+            if host.contains("payfast") || path.contains("checkout") || path.contains("pay") {
+                parent.statusHint = "Secure payment in progress — don’t close until you finish."
+            } else if path.contains("/payments/return") {
+                parent.statusHint = "Confirming payment…"
+            } else if path.contains("/watch") || path.contains("/browse/content") {
+                parent.statusHint = "Unlocked — returning to the app to play…"
+            } else {
+                parent.statusHint = "Complete payment to unlock this title."
+            }
+        }
+
         @MainActor
         private func checkSessionSuccess(_ webView: WKWebView) async {
             guard !didNotifySession else { return }
-            guard let path = webView.url?.path.lowercased() else { return }
+            guard let url = webView.url else { return }
+            let path = url.path.lowercased()
+            let full = url.absoluteString.lowercased()
 
-            // Keep the signup sheet open through terms + payment package selection.
-            // Only finish once they reach the app destinations.
-            let finishPaths: [String]
-            if parent.mode == .signUp {
-                finishPaths = ["/profiles", "/browse"]
-            } else {
-                finishPaths = ["profiles", "browse", "account"]
-            }
-
-            let isFinish: Bool
-            if parent.mode == .signUp {
-                isFinish = finishPaths.contains(where: { path == $0 || path.hasPrefix($0 + "/") })
-                    && !path.contains("auth/")
-                    && !path.contains("onboarding")
-            } else {
-                isFinish = finishPaths.contains(where: { path.contains($0) })
-                    && !path.contains("auth/signin")
-                    && !path.contains("auth/signup")
-            }
-            guard isFinish else { return }
-
-            await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
-            if let session = try? await AuthService.shared.fetchSession(), session.user != nil {
+            switch parent.mode {
+            case .checkout(let contentId):
+                // Payment return / success pages, or content watch after PayFast redirect.
+                let cid = contentId.lowercased()
+                let host = url.host?.lowercased() ?? ""
+                let finished =
+                    path.contains("/payments/return")
+                    || path.contains("/payments/success")
+                    || path.contains("/payment/return")
+                    || path.contains("/payment/success")
+                    || full.contains("payment_status=complete")
+                    || full.contains("payment_status=success")
+                    || full.contains("transaction_status=complete")
+                    || path.contains("/browse/content/\(cid)/watch")
+                    || (path.contains("/browse/content/\(cid)") && (full.contains("viewer_ppv") || full.contains("paid=1") || full.contains("unlocked=1")))
+                    || (path.contains("/watch") && full.contains(cid))
+                    // PayFast often lands on itn/return then redirects; if still on pay host with success signal, finish.
+                    || (host.contains("payfast") && (full.contains("complete") || full.contains("success") || path.contains("return")))
+                guard finished else { return }
+                // Brief pause so status webhooks can settle.
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
                 didNotifySession = true
                 parent.onSessionEstablished?()
+                return
+
+            case .signUp:
+                let finishPaths = ["/profiles", "/browse"]
+                let isFinish = finishPaths.contains(where: { path == $0 || path.hasPrefix($0 + "/") })
+                    && !path.contains("auth/")
+                    && !path.contains("onboarding")
+                guard isFinish else { return }
+                await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
+                if let session = try? await AuthService.shared.fetchSession(), session.user != nil {
+                    didNotifySession = true
+                    parent.onSessionEstablished?()
+                }
+
+            case .account:
+                // Manual Done — never auto-finish account management browser.
+                return
             }
         }
     }

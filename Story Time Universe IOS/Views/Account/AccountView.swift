@@ -7,6 +7,8 @@ struct AccountView: View {
     @State private var showDelete = false
     @State private var showParental = false
     @State private var showAgeAssurance = false
+    @State private var showAccountInfo = false
+    @State private var showPlaybackHelp = false
 
     private struct WebDestination: Identifiable {
         let id = UUID()
@@ -22,11 +24,11 @@ struct AccountView: View {
 
                     settingsGroup(title: nil) {
                         settingsRow(
-                            title: "Account info & settings",
-                            subtitle: appState.session?.user?.email ?? "Manage address, notifications, preferences",
+                            title: "Account info",
+                            subtitle: appState.session?.user?.email ?? "Name, email, phone, address and plan",
                             systemImage: "person.crop.circle"
                         ) {
-                            openWeb(AppConfig.settingsURL, title: "Settings")
+                            showAccountInfo = true
                         }
                     }
 
@@ -43,10 +45,7 @@ struct AccountView: View {
                             openWeb(AppConfig.changePlanURL, title: "Change plan")
                         }
                         settingsRow(title: "Downloads", subtitle: "View offline titles", systemImage: "arrow.down.circle") {
-                            // Downloads live on the Downloads tab — surface offline gate if needed.
-                            if !NetworkMonitor.shared.isOnline {
-                                appState.openOfflineLibrary()
-                            }
+                            appState.openDownloads()
                         }
                     }
 
@@ -83,11 +82,11 @@ struct AccountView: View {
                         quickAction(title: "Switch\nProfile", systemImage: "person.2.fill") {
                             appState.switchProfile()
                         }
-                        quickAction(title: "Manage\nAccount", systemImage: "gearshape.fill") {
-                            openWeb(AppConfig.accountURL, title: "Account")
+                        quickAction(title: "Account\nInfo", systemImage: "person.text.rectangle") {
+                            showAccountInfo = true
                         }
                         quickAction(title: "Playback\nHelp", systemImage: "play.rectangle.fill") {
-                            openWeb(AppConfig.settingsURL, title: "Settings")
+                            showPlaybackHelp = true
                         }
                     }
 
@@ -127,6 +126,13 @@ struct AccountView: View {
             .sheet(item: $webDestination) { dest in
                 AuthenticatedWebBrowser(url: dest.url, title: dest.title, mode: .account)
             }
+            .sheet(isPresented: $showAccountInfo) {
+                AccountInfoView()
+                    .environmentObject(appState)
+            }
+            .sheet(isPresented: $showPlaybackHelp) {
+                PlaybackHelpView()
+            }
             .sheet(isPresented: $showParental) {
                 ParentalControlsView()
             }
@@ -147,7 +153,7 @@ struct AccountView: View {
 
     private var profileHeaderCard: some View {
         Button {
-            openWeb(AppConfig.accountURL, title: "Account")
+            showAccountInfo = true
         } label: {
             HStack(spacing: 14) {
                 ZStack {
@@ -221,13 +227,15 @@ struct AccountView: View {
                             .lineLimit(2)
                     }
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Theme.muted)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -258,13 +266,18 @@ struct AccountView: View {
     }
 
     private func friendlyPlan(_ plan: String?) -> String {
-        guard let plan else { return "No plan" }
+        guard let plan else {
+            if appState.isPayPerViewAccount { return "Pay Per View" }
+            return "No plan"
+        }
         switch plan.uppercased() {
         case "BASE_1": return "Base"
         case "STANDARD_3": return "Standard"
         case "FAMILY_5": return "Family"
-        case "PPV_FILM": return "Single title"
-        default: return plan.replacingOccurrences(of: "_", with: " ")
+        case "PPV_FILM", "PPV", "PAY_PER_VIEW": return "Pay Per View"
+        default:
+            if plan.uppercased().contains("PPV") { return "Pay Per View" }
+            return plan.replacingOccurrences(of: "_", with: " ")
         }
     }
 }

@@ -19,8 +19,8 @@ struct DownloadRecord: Codable, Identifiable, Hashable {
     var subtitle: String?
     var posterUrl: String?
     var type: String?
-    /// Path of the downloaded asset relative to the app home directory.
-    /// Stored relative because the sandbox absolute path changes between launches.
+    /// Path of the downloaded asset relative to the app home directory
+    /// (or an absolute sandbox path if that's what AVFoundation returned).
     var relativePath: String?
     var isHLS: Bool
     var state: DownloadState
@@ -33,13 +33,40 @@ struct DownloadRecord: Codable, Identifiable, Hashable {
 
     var id: String { key }
 
+    /// Resolves a playable local file/directory on disk.
     var localURL: URL? {
         guard let relativePath, !relativePath.isEmpty else { return nil }
-        return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(relativePath)
+        let fm = FileManager.default
+        let candidates = Self.candidateURLs(forStoredPath: relativePath)
+        return candidates.first { fm.fileExists(atPath: $0.path) }
     }
 
     var isPlayableOffline: Bool {
         state == .completed && localURL != nil
+    }
+
+    static func candidateURLs(forStoredPath path: String) -> [URL] {
+        var urls: [URL] = []
+        if path.hasPrefix("/") {
+            urls.append(URL(fileURLWithPath: path))
+        }
+        let home = NSHomeDirectory()
+        urls.append(URL(fileURLWithPath: home).appendingPathComponent(path))
+        // Sometimes paths are stored without the leading Library/ path segment.
+        if !path.hasPrefix("Library"), !path.hasPrefix("Documents"), !path.hasPrefix("tmp") {
+            urls.append(URL(fileURLWithPath: home).appendingPathComponent("Library").appendingPathComponent(path))
+        }
+        return urls
+    }
+
+    /// Persist paths relative to home when possible so sandbox container moves keep working.
+    static func storagePath(for fileURL: URL) -> String {
+        let home = NSHomeDirectory()
+        let path = fileURL.standardizedFileURL.path
+        if path.hasPrefix(home) {
+            return String(path.dropFirst(home.count).drop(while: { $0 == "/" }))
+        }
+        return path
     }
 }
 

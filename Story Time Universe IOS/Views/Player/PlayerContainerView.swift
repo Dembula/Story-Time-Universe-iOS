@@ -19,16 +19,22 @@ struct PlayerContainerView: View {
     @State private var hideTask: Task<Void, Never>?
     @State private var isLocked = false
     @State private var brightness = Double(UIScreen.main.brightness)
+    @State private var brightnessBase: Double = Double(UIScreen.main.brightness)
+    @State private var isAdjustingBrightness = false
     @State private var seekFeedback: SeekFeedback?
     @State private var seekFeedbackTask: Task<Void, Never>?
     @State private var currentEpisodeId: String?
     @State private var showNextUp = false
     @State private var nextCountdown = 0
     @State private var countdownTask: Task<Void, Never>?
-    @State private var showBrightness = false
-    @State private var brightnessHideTask: Task<Void, Never>?
-    private let hapticLight = UIImpactFeedbackGenerator(style: .light)
-    private let hapticMedium = UIImpactFeedbackGenerator(style: .medium)
+    @State private var ppvCheckoutURL: IdentifiedURL?
+    @State private var isRetryingAfterCheckout = false
+    private let haptic = UIImpactFeedbackGenerator(style: .light)
+
+    private struct IdentifiedURL: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
 
     var body: some View {
         ZStack {
@@ -38,7 +44,7 @@ struct PlayerContainerView: View {
                 PlayerLayerView(player: player)
                     .ignoresSafeArea()
 
-                seekTapLayer
+                playerGestureLayer
 
                 if seekFeedback != nil {
                     seekFeedbackOverlay
@@ -58,6 +64,13 @@ struct PlayerContainerView: View {
                         .animation(.easeInOut(duration: 0.25), value: controlsVisible)
                 }
 
+                // Brightness HUD while user is sliding on the left edge (works even if chrome is hidden).
+                if isAdjustingBrightness && !isLocked {
+                    brightnessHUD
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
+
                 if showNextUp, let next = nextEpisode {
                     NextUpOverlay(
                         next: next,
@@ -70,48 +83,40 @@ struct PlayerContainerView: View {
                     )
                     .transition(.opacity)
                 }
-
-                // Brightness appears on long-press left edge — independent of chrome.
-                if showBrightness && !isLocked {
-                    HStack {
-                        BrightnessSlider(brightness: $brightness)
-                            .padding(.leading, 20)
-                            .transition(.opacity.combined(with: .move(edge: .leading)))
-                            .onChange(of: brightness) { _, newValue in
-                                UIScreen.main.brightness = CGFloat(newValue)
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.35)
-                                scheduleBrightnessHide()
-                            }
-                        Spacer()
-                    }
-                    .animation(.easeInOut(duration: 0.22), value: showBrightness)
-                    .allowsHitTesting(true)
-                }
             } else if model.isLoading {
                 ProgressView(isTrailer ? "Loading trailer…" : "Loading…")
                     .tint(Theme.accent)
                     .foregroundStyle(.white)
             } else if let error = model.errorMessage {
                 VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle.fill")
+                    Image(systemName: model.needsPurchase ? "cart.fill" : "exclamationmark.triangle.fill")
                         .font(.largeTitle)
                         .foregroundStyle(Theme.accent)
                     Text(error)
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.white)
                         .padding(.horizontal)
-                    Button("Close") { close() }
+                    if model.needsPurchase {
+                        Button("Unlock to Watch") {
+                            Task { await unlockFromPlayer() }
+                        }
                         .buttonStyle(.borderedProminent)
                         .tint(Theme.accent)
                         .foregroundStyle(.black)
+                    }
+                    Button("Close") { close() }
+                        .buttonStyle(.bordered)
+                        .tint(.white)
                 }
             }
         }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .task {
+            haptic.prepare()
             OrientationLock.lockLandscape()
             currentEpisodeId = episodeId
+            brightness = Double(UIScreen.main.brightness)
             await model.start(contentId: contentId, episodeId: episodeId, trailer: isTrailer)
             scheduleHideControls()
         }
@@ -133,6 +138,52 @@ struct PlayerContainerView: View {
             if nextEpisode != nil {
                 beginNextUp()
             }
+        }
+        .onChange(of: brightness) { _, newValue in
+            UIScreen.main.brightness = CGFloat(min(1, max(0, newValue)))
+        }
+        .sheet(item: $ppvCheckoutURL, onDismiss: {
+            Task { await retryPlayAfterCheckout() }
+        }) { item in
+            AuthenticatedWebBrowser(
+                url: item.url,
+                title: "Unlock Title",
+                mode: .checkout(contentId: contentId)
+            ) {
+                Task { await retryPlayAfterCheckout() }
+            }
+        }
+    }
+
+    private func unlockFromPlayer() async {
+        model.isLoading = true
+        model.errorMessage = nil
+        defer { model.isLoading = false }
+        let access = await ViewerAPI.shared.resolveTitleAccess(
+            contentId: contentId,
+            isPayPerViewAccount: true,
+            isTrailer: false
+        )
+        switch access {
+        case .playable:
+            await model.start(contentId: contentId, episodeId: currentEpisodeId, trailer: isTrailer)
+        case .requiresCheckout(let url):
+            model.isLoading = false
+            ppvCheckoutURL = IdentifiedURL(url: url)
+        case .blocked(let message):
+            model.errorMessage = message
+            model.needsPurchase = true
+        }
+    }
+
+    private func retryPlayAfterCheckout() async {
+        guard !isRetryingAfterCheckout else { return }
+        isRetryingAfterCheckout = true
+        defer { isRetryingAfterCheckout = false }
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        await model.start(contentId: contentId, episodeId: currentEpisodeId, trailer: isTrailer)
+        if model.player != nil {
+            scheduleHideControls()
         }
     }
 
@@ -187,22 +238,69 @@ struct PlayerContainerView: View {
         }
     }
 
-    private var seekTapLayer: some View {
-        HStack(spacing: 0) {
-            // Left third: double-tap rewind · long-press brightness · single tap controls
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) { doubleTapSeek(by: -10) }
-                .onLongPressGesture(minimumDuration: 0.35) {
-                    revealBrightness()
-                }
-                .onTapGesture { toggleControls() }
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) { doubleTapSeek(by: 10) }
-                .onTapGesture { toggleControls() }
+    private var playerGestureLayer: some View {
+        GeometryReader { geo in
+            let leftWidth = geo.size.width * 0.32
+            HStack(spacing: 0) {
+                // Left zone: vertical slide = brightness · double-tap = −10s · tap = chrome
+                Color.clear
+                    .frame(width: leftWidth)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 10)
+                            .onChanged { value in
+                                guard !isLocked else { return }
+                                // Prefer vertical motion for brightness.
+                                if !isAdjustingBrightness {
+                                    if abs(value.translation.height) < abs(value.translation.width) { return }
+                                    isAdjustingBrightness = true
+                                    brightnessBase = brightness
+                                    controlsVisible = false
+                                    hideTask?.cancel()
+                                }
+                                let delta = -Double(value.translation.height) / Double(geo.size.height * 0.55)
+                                brightness = min(1, max(0, brightnessBase + delta))
+                            }
+                            .onEnded { _ in
+                                isAdjustingBrightness = false
+                            }
+                    )
+                    .onTapGesture(count: 2) { doubleTapSeek(by: -10) }
+                    .onTapGesture { if !isAdjustingBrightness { toggleControls() } }
+
+                // Center + right: double-tap +10 on right half of remaining area · tap chrome
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { doubleTapSeek(by: 10) }
+                    .onTapGesture { toggleControls() }
+            }
         }
         .ignoresSafeArea()
+    }
+
+    private var brightnessHUD: some View {
+        HStack {
+            VStack(spacing: 10) {
+                Image(systemName: brightness > 0.55 ? "sun.max.fill" : "sun.min.fill")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.white.opacity(0.2))
+                    .frame(width: 6, height: 110)
+                    .overlay(alignment: .bottom) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Theme.accent)
+                            .frame(height: max(6, 110 * brightness))
+                    }
+                Text("\(Int(brightness * 100))%")
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+            .padding(14)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(.leading, 22)
+            Spacer()
+        }
     }
 
     @ViewBuilder
@@ -230,7 +328,8 @@ struct PlayerContainerView: View {
             HStack {
                 Spacer()
                 Button {
-                    hapticMedium.impactOccurred()
+                    haptic.impactOccurred()
+                    haptic.prepare()
                     isLocked = false
                     showControls(persistent: !model.isPlaying)
                 } label: {
@@ -277,10 +376,11 @@ struct PlayerContainerView: View {
                         .shadow(radius: 4)
                     Spacer()
                     Button {
-                        hapticMedium.impactOccurred()
+                        haptic.impactOccurred()
+                        haptic.prepare()
                         isLocked = true
                         showControls(persistent: false)
-                        showBrightness = false
+                        isAdjustingBrightness = false
                     } label: {
                         Image(systemName: "lock.open")
                             .font(.headline.weight(.bold))
@@ -295,10 +395,18 @@ struct PlayerContainerView: View {
 
                 Spacer()
 
+                // Brightness lives with chrome so taps show it with the rest of the controls.
+                HStack(alignment: .center) {
+                    BrightnessSlider(brightness: $brightness)
+                        .padding(.leading, 18)
+                    Spacer()
+                }
+
                 HStack(spacing: 48) {
                     Button {
                         model.seek(by: -10)
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        haptic.impactOccurred()
+                        haptic.prepare()
                     } label: {
                         Image(systemName: "gobackward.10")
                             .font(.system(size: 34, weight: .semibold))
@@ -319,7 +427,8 @@ struct PlayerContainerView: View {
 
                     Button {
                         model.seek(by: 10)
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        haptic.impactOccurred()
+                        haptic.prepare()
                     } label: {
                         Image(systemName: "goforward.10")
                             .font(.system(size: 34, weight: .semibold))
@@ -339,11 +448,11 @@ struct PlayerContainerView: View {
 
     private func doubleTapSeek(by delta: Double) {
         guard !isLocked else { return }
-        // Double-tap should only show the ±10s badge — not full chrome.
         controlsVisible = false
         hideTask?.cancel()
         model.seek(by: delta)
-        hapticMedium.impactOccurred()
+        haptic.impactOccurred()
+        haptic.prepare()
         let total = (seekFeedback?.isForward == (delta > 0)) ? (seekFeedback?.total ?? 0) + delta : delta
         withAnimation(.easeInOut(duration: 0.15)) {
             seekFeedback = SeekFeedback(isForward: delta > 0, total: total)
@@ -354,24 +463,6 @@ struct PlayerContainerView: View {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 withAnimation(.easeInOut(duration: 0.2)) { seekFeedback = nil }
-            }
-        }
-    }
-
-    private func revealBrightness() {
-        guard !isLocked else { return }
-        hapticLight.impactOccurred()
-        withAnimation(.easeInOut(duration: 0.2)) { showBrightness = true }
-        scheduleBrightnessHide()
-    }
-
-    private func scheduleBrightnessHide() {
-        brightnessHideTask?.cancel()
-        brightnessHideTask = Task {
-            try? await Task.sleep(nanoseconds: 2_800_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(.easeInOut(duration: 0.25)) { showBrightness = false }
             }
         }
     }
@@ -680,6 +771,8 @@ final class PlayerViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var isPlaying = false
     @Published var didReachEnd = false
+    /// True when playback-bundle returned 402 — parent UI should offer PPV checkout.
+    @Published var needsPurchase = false
 
     private var contentId: String = ""
     private var progressTimer: AnyCancellable?
@@ -692,16 +785,26 @@ final class PlayerViewModel: ObservableObject {
         self.contentId = contentId
         isLoading = true
         errorMessage = nil
+        needsPurchase = false
         defer { isLoading = false }
 
         Self.configureAudioSession()
         didReachEnd = false
 
         do {
-            let asset: AVURLAsset
+            let item: AVPlayerItem
+            let isOffline: Bool
+
             if !trailer, let offline = DownloadManager.shared.offlineAsset(contentId: contentId, episodeId: episodeId) {
-                // Play the sandboxed offline copy — works with no network.
-                asset = offline
+                item = AVPlayerItem(asset: offline)
+                isOffline = true
+            } else if !trailer,
+                      let primed = await PlaybackWarmCache.shared.consumePrimedItem(
+                        contentId: contentId,
+                        episodeId: episodeId
+                      ) {
+                item = primed
+                isOffline = false
             } else {
                 let bundle = try await ViewerAPI.shared.fetchPlaybackBundle(
                     contentId: contentId,
@@ -711,48 +814,47 @@ final class PlayerViewModel: ObservableObject {
                 guard let url = bundle.streamURL else {
                     throw APIError.server("No playable stream was returned for this title.")
                 }
-                asset = Self.authenticatedAsset(for: url)
+                item = AVPlayerItem(asset: Self.authenticatedAsset(for: url))
+                isOffline = false
             }
 
+            // Resume position: skip network when offline so downloaded titles play without internet.
             let resumeAt: Int
-            if trailer {
+            if trailer || isOffline {
                 resumeAt = 0
             } else {
-                // Resilient offline: don't fail playback if progress can't be fetched.
                 resumeAt = (try? await ViewerAPI.shared.fetchWatchProgress(contentId: contentId).position) ?? 0
             }
-            let item = AVPlayerItem(asset: asset)
+
+            item.preferredForwardBufferDuration = isOffline ? 0 : 10
+            item.canUseNetworkResourcesForLiveStreamingWhilePaused = false
+
             let avPlayer = AVPlayer(playerItem: item)
             avPlayer.automaticallyWaitsToMinimizeStalling = true
             avPlayer.isMuted = false
             avPlayer.volume = 1.0
             self.player = avPlayer
+            observeEnd(of: item)
             observePlayback(avPlayer)
+            beginProgressReporting(player: avPlayer, offline: isOffline)
 
-            if !trailer, resumeAt > 5 {
+            if resumeAt > 0 {
                 let time = CMTime(seconds: Double(resumeAt), preferredTimescale: 600)
                 await avPlayer.seek(to: time)
             }
-
             Self.configureAudioSession()
             avPlayer.play()
             isPlaying = true
-            if !trailer {
-                beginProgressReporting(player: avPlayer)
-            }
-
-            endObserver = NotificationCenter.default.addObserver(
-                forName: .AVPlayerItemDidPlayToEndTime,
-                object: item,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.isPlaying = false
-                    self?.didReachEnd = true
-                    self?.flushProgress(final: true)
-                }
+        } catch let error as APIError {
+            player = nil
+            if case .paymentRequired = error {
+                needsPurchase = true
+                errorMessage = "Purchase this title to watch."
+            } else {
+                errorMessage = error.localizedDescription
             }
         } catch {
+            player = nil
             errorMessage = error.localizedDescription
         }
     }
@@ -797,6 +899,23 @@ final class PlayerViewModel: ObservableObject {
         isPlaying = false
     }
 
+    private func observeEnd(of item: AVPlayerItem) {
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+        }
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.isPlaying = false
+                self?.didReachEnd = true
+                self?.flushProgress(final: true)
+            }
+        }
+    }
+
     private func observePlayback(_ player: AVPlayer) {
         timeControlObserver?.invalidate()
         timeControlObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
@@ -806,7 +925,10 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
-    private func beginProgressReporting(player: AVPlayer) {
+    private var suppressProgressNetwork = false
+
+    private func beginProgressReporting(player: AVPlayer, offline: Bool) {
+        suppressProgressNetwork = offline
         progressTimer = Timer.publish(every: 8, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
@@ -816,6 +938,7 @@ final class PlayerViewModel: ObservableObject {
 
     private func flushProgress(final: Bool) {
         guard let player, !contentId.isEmpty else { return }
+        if suppressProgressNetwork { return }
         let position = player.currentTime().seconds
         guard position.isFinite, position >= 0 else { return }
         let duration = player.currentItem?.duration.seconds

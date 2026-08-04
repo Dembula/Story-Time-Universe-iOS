@@ -23,6 +23,15 @@ enum AppConfig {
     static let settingsURL = webBaseURL.appendingPathComponent("browse/settings")
     static let profilesURL = webBaseURL.appendingPathComponent("profiles")
 
+    /// Content watch page (post-PPV payment redirect lands nearby).
+    static func contentWatchURL(contentId: String) -> URL {
+        webBaseURL.appendingPathComponent("browse/content/\(contentId)/watch")
+    }
+
+    static func contentDetailURL(contentId: String) -> URL {
+        webBaseURL.appendingPathComponent("browse/content/\(contentId)")
+    }
+
     static let viewerProfileCookieName = "st_viewer_profile"
     static let viewerProfileUnlockCookieName = "st_viewer_profile_unlock"
 
