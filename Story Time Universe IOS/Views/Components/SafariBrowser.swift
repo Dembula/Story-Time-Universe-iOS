@@ -25,25 +25,26 @@ struct SafariView: UIViewControllerRepresentable {
 enum WebBrowserMode {
     /// After native sign-in: inject app session cookies for account/billing pages.
     case account
-    /// Fresh signup — no prior cookies, blocks “Back to home”, only finishes after real app destinations.
+    /// Fresh signup funnel — cookies sync out to the app so we can adopt the session.
     case signUp
     /// Pay-per-view / unlock checkout (PayFast etc.). Injects session, allows external payment hosts.
     case checkout(contentId: String)
 }
 
-/// Secure in-app browser showing host/HTTPS, with cookie sync for account pages
-/// and a locked-down signup funnel so marketing “Back to home” cannot steal the flow.
+/// Secure in-app browser. For **signUp**, exports NextAuth cookies and signals the host when
+/// the session is live so the Universe app can route to Profiles automatically.
 struct AuthenticatedWebBrowser: View {
     let url: URL
     var title: String = "Story Time"
     var mode: WebBrowserMode = .account
-    /// Called when signup handoff completes, or when PPV checkout returns successfully.
+    /// Called after cookies are exported and a live session is detected (signup) or checkout completes.
     var onSessionEstablished: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var pageTitle: String = ""
     @State private var currentHost: String = ""
     @State private var statusHint: String = ""
+    @State private var hasFinishedHandoff = false
 
     private var showsHintBar: Bool {
         switch mode {
@@ -94,6 +95,8 @@ struct AuthenticatedWebBrowser: View {
                     currentHost: $currentHost,
                     statusHint: $statusHint,
                     onSessionEstablished: {
+                        guard !hasFinishedHandoff else { return }
+                        hasFinishedHandoff = true
                         onSessionEstablished?()
                         switch mode {
                         case .signUp, .checkout:
@@ -120,12 +123,19 @@ struct AuthenticatedWebBrowser: View {
             return false
         }())
         .onAppear {
-            if case .checkout = mode {
+            switch mode {
+            case .checkout:
                 statusHint = "Complete payment to unlock this title, then you’ll return to watch."
+            case .signUp:
+                statusHint = "Complete terms, account, and payment here. The app will sign you in when ready."
+            case .account:
+                break
             }
         }
     }
 }
+
+// MARK: - WKWebView
 
 private struct AuthWebView: UIViewRepresentable {
     let url: URL
@@ -141,33 +151,37 @@ private struct AuthWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        // Sign-up must not reuse someone else's cookies / WebsiteDataStore.
-        let isSignUp: Bool = {
-            if case .signUp = mode { return true }
-            return false
-        }()
-        config.websiteDataStore = isSignUp ? .nonPersistent() : .default()
+        // Use default store after the host clears shared cookies — non-persistent stores
+        // historically lost NextAuth tokens on export. Default is more reliable for handoff.
+        config.websiteDataStore = .default()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         config.applicationNameForUserAgent = "StoryTimeUniverseiOS"
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = DeviceIdentity.userAgent
         webView.navigationDelegate = context.coordinator
-        webView.allowsBackForwardNavigationGestures = !isSignUp
+        webView.allowsBackForwardNavigationGestures = {
+            if case .signUp = mode { return false }
+            return true
+        }()
         webView.backgroundColor = .black
         webView.isOpaque = false
         webView.scrollView.backgroundColor = .black
+
+        context.coordinator.bind(webView: webView)
 
         Task {
             switch mode {
             case .account, .checkout:
                 await CookieBridge.injectSharedCookies(into: webView.configuration.websiteDataStore)
             case .signUp:
-                break
+                // Ensure clean jar for a brand-new signup (host already cleared shared cookies).
+                await CookieBridge.injectSharedCookies(into: webView.configuration.websiteDataStore)
             }
             await MainActor.run {
                 var request = URLRequest(url: url)
                 request.setValue(DeviceIdentity.userAgent, forHTTPHeaderField: "User-Agent")
+                request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
                 webView.load(request)
             }
         }
@@ -179,9 +193,24 @@ private struct AuthWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         let parent: AuthWebView
         private var didNotifySession = false
+        private weak var webView: WKWebView?
+        private var pollTask: Task<Void, Never>?
+        private var sawPackageOrPayment = false
+        private var sawAccountCreated = false
 
         init(_ parent: AuthWebView) {
             self.parent = parent
+        }
+
+        func bind(webView: WKWebView) {
+            self.webView = webView
+            if case .signUp = parent.mode {
+                startSignupPoller()
+            }
+        }
+
+        deinit {
+            pollTask?.cancel()
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -191,16 +220,14 @@ private struct AuthWebView: UIViewRepresentable {
             if case .signUp = parent.mode {
                 injectSignupUICleanup(webView)
                 updateSignupHint(for: webView.url)
+                noteSignupProgress(url: webView.url)
             }
             if case .checkout = parent.mode {
                 updateCheckoutHint(for: webView.url)
             }
 
-            Task {
-                switch parent.mode {
-                case .account, .signUp, .checkout:
-                    await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
-                }
+            Task { @MainActor in
+                await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
                 await checkSessionSuccess(webView)
             }
         }
@@ -219,38 +246,79 @@ private struct AuthWebView: UIViewRepresentable {
             if case .signUp = parent.mode {
                 if shouldBlockSignupNavigation(url) {
                     decisionHandler(.cancel)
-                    webView.load(URLRequest(url: AppConfig.viewerSignUpURLForApp))
+                    let path = url.path.lowercased()
+                    // After package/payment, never dump the user on a fresh signup page;
+                    // send them toward profiles so handoff can complete.
+                    let bounce: URL
+                    if isCreatorLikePath(path) || sawPackageOrPayment || sawAccountCreated {
+                        bounce = AppConfig.profilesURL
+                    } else {
+                        bounce = AppConfig.viewerSignUpURLForApp
+                    }
+                    webView.load(URLRequest(url: bounce))
                     return
+                }
+                noteSignupProgress(url: url)
+                // Soft-navigations: check after each navigation decision.
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 600_000_000)
+                    await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
+                    await self.checkSessionSuccess(webView)
                 }
             }
             decisionHandler(.allow)
         }
 
-        /// Marketing home breaks the funnel. Finished accounts may land on /profiles or /browse.
+        private func noteSignupProgress(url: URL?) {
+            guard let path = url?.path.lowercased() else { return }
+            if path.contains("package")
+                || path.contains("onboarding")
+                || path.contains("payfast")
+                || path.contains("payment")
+                || path.contains("checkout")
+            {
+                sawPackageOrPayment = true
+            }
+            if path.contains("profiles") || path.hasPrefix("/browse") {
+                sawPackageOrPayment = true
+            }
+            // After credentials form: web POSTs signup then redirects to package.
+            if path.contains("onboarding") || path.contains("package") {
+                sawAccountCreated = true
+            }
+            if path.contains("signup") && !path.contains("terms") {
+                // User is on create form — not enough alone.
+            }
+        }
+
         private func shouldBlockSignupNavigation(_ url: URL) -> Bool {
             guard let host = url.host?.lowercased(), host.contains("story-time.online") else {
-                // External payment hosts (PayFast, etc.) must be allowed.
-                return false
+                return false // PayFast / external hosts ok
             }
             let path = url.path.lowercased()
-
-            // Explicitly block marketing “Back to home” and public landing.
             if path == "/" || path.isEmpty || path == "/about" || path == "/home" {
                 return true
             }
-            // Never drift into creator / admin tools mid-signup.
-            if path.hasPrefix("/auth/creator") || path.hasPrefix("/admin") || path.hasPrefix("/auth/admin") {
-                return true
-            }
-            return false
+            return isCreatorLikePath(path)
+        }
+
+        private func isCreatorLikePath(_ path: String) -> Bool {
+            path.hasPrefix("/auth/creator")
+                || path.hasPrefix("/creator")
+                || path.hasPrefix("/studio")
+                || path.hasPrefix("/dashboard")
+                || path.hasPrefix("/admin")
+                || path.hasPrefix("/auth/admin")
+                || path.hasPrefix("/production")
+                || path.contains("/portal/creator")
         }
 
         private func injectSignupUICleanup(_ webView: WKWebView) {
-            // Hide “Back to home” and similar marketing chrome when running inside the iOS app.
             let js = """
             (function() {
               try {
                 document.documentElement.setAttribute('data-st-ios-app', '1');
+                document.documentElement.setAttribute('data-st-platform', 'ios');
                 var hide = function(el) {
                   if (!el) return;
                   el.style.setProperty('display','none','important');
@@ -262,9 +330,17 @@ private struct AuthWebView: UIViewRepresentable {
                 for (var i = 0; i < nodes.length; i++) {
                   var el = nodes[i];
                   var t = (el.textContent || '').replace(/\\s+/g,' ').trim().toLowerCase();
-                  var href = (el.getAttribute && el.getAttribute('href')) || '';
-                  href = (href || '').trim();
-                  if (t.indexOf('back to home') !== -1 || t === 'home' || href === '/' || href === 'https://story-time.online/' || href === 'https://story-time.online') {
+                  var href = ((el.getAttribute && el.getAttribute('href')) || '').trim().toLowerCase();
+                  if (
+                    t.indexOf('back to home') !== -1
+                    || t === 'home'
+                    || href === '/'
+                    || href === 'https://story-time.online/'
+                    || href === 'https://story-time.online'
+                    || href.indexOf('/auth/creator') === 0
+                    || href.indexOf('/creator') === 0
+                    || href.indexOf('/studio') === 0
+                  ) {
                     hide(el);
                   }
                 }
@@ -279,13 +355,15 @@ private struct AuthWebView: UIViewRepresentable {
             if path.contains("terms") {
                 parent.statusHint = "Accept terms, then create your account"
             } else if path.contains("onboarding") || path.contains("package") {
-                parent.statusHint = "Choose a plan to activate your account — stay here until finished"
+                parent.statusHint = "Choose a plan and complete payment — stay here until finished"
+            } else if path.contains("payfast") || path.contains("payment") || path.contains("checkout") {
+                parent.statusHint = "Secure payment… when it finishes you’ll return to the app"
             } else if path.contains("signup") {
-                parent.statusHint = "Complete signup here. Don’t leave this screen until you’re done."
+                parent.statusHint = "Create your account, then pick a plan. Don’t leave this screen."
             } else if path.contains("profiles") || path.hasPrefix("/browse") {
-                parent.statusHint = "Almost done — opening the app…"
+                parent.statusHint = "Account ready — signing you into the app…"
             } else {
-                parent.statusHint = "Stay in this window until your account is ready"
+                parent.statusHint = "Stay in this window until your account is activated"
             }
         }
 
@@ -304,6 +382,22 @@ private struct AuthWebView: UIViewRepresentable {
             }
         }
 
+        private func startSignupPoller() {
+            pollTask?.cancel()
+            pollTask = Task { [weak self] in
+                for _ in 0..<90 { // ~3 minutes at 2s
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    guard let self, !self.didNotifySession, let webView = self.webView else { return }
+                    await MainActor.run {
+                        self.parent.currentHost = webView.url?.host ?? self.parent.currentHost
+                    }
+                    await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
+                    await self.checkSessionSuccess(webView)
+                }
+            }
+        }
+
         @MainActor
         private func checkSessionSuccess(_ webView: WKWebView) async {
             guard !didNotifySession else { return }
@@ -313,7 +407,6 @@ private struct AuthWebView: UIViewRepresentable {
 
             switch parent.mode {
             case .checkout(let contentId):
-                // Payment return / success pages, or content watch after PayFast redirect.
                 let cid = contentId.lowercased()
                 let host = url.host?.lowercased() ?? ""
                 let finished =
@@ -323,65 +416,143 @@ private struct AuthWebView: UIViewRepresentable {
                     || path.contains("/payment/success")
                     || full.contains("payment_status=complete")
                     || full.contains("payment_status=success")
-                    || full.contains("transaction_status=complete")
                     || path.contains("/browse/content/\(cid)/watch")
-                    || (path.contains("/browse/content/\(cid)") && (full.contains("viewer_ppv") || full.contains("paid=1") || full.contains("unlocked=1")))
-                    || (path.contains("/watch") && full.contains(cid))
-                    // PayFast often lands on itn/return then redirects; if still on pay host with success signal, finish.
+                    || (path.contains("/browse/content/\(cid)") && full.contains("viewer_ppv"))
                     || (host.contains("payfast") && (full.contains("complete") || full.contains("success") || path.contains("return")))
                 guard finished else { return }
-                // Brief pause so status webhooks can settle.
-                try? await Task.sleep(nanoseconds: 800_000_000)
+                try? await Task.sleep(nanoseconds: 700_000_000)
                 await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
-                didNotifySession = true
-                parent.onSessionEstablished?()
+                await finishHandoff(from: webView)
                 return
 
             case .signUp:
-                let finishPaths = ["/profiles", "/browse"]
-                let isFinish = finishPaths.contains(where: { path == $0 || path.hasPrefix($0 + "/") })
-                    && !path.contains("auth/")
-                    && !path.contains("onboarding")
-                guard isFinish else { return }
                 await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
-                if let session = try? await AuthService.shared.fetchSession(), session.user != nil {
-                    didNotifySession = true
-                    parent.onSessionEstablished?()
+
+                if isEarlySignupForm(path) { return }
+
+                // Never auto-dismiss during an external payment host until a return/success URL.
+                let host = url.host?.lowercased() ?? ""
+                if isPaymentInProgress(host: host, path: path, full: full) {
+                    return
+                }
+
+                if isCreatorLikePath(path) {
+                    webView.load(URLRequest(url: AppConfig.profilesURL))
+                    return
+                }
+
+                // Require a live native session after cookie export (same path adoptWebSession uses).
+                guard let session = try? await AuthService.shared.adoptWebSession(),
+                      session.user != nil
+                else { return }
+
+                let activated = await hasActivatedViewerAccess()
+
+                // Package / onboarding: hand off only when access exists or payment success is visible.
+                // Stay put while the user is still choosing/paying for a plan.
+                if path.contains("onboarding") || path.contains("package") {
+                    if activated
+                        || full.contains("paid")
+                        || full.contains("success")
+                        || full.contains("complete")
+                        || full.contains("payment_status=")
+                    {
+                        parent.statusHint = "Plan active — opening the app…"
+                        await finishHandoff(from: webView)
+                    }
+                    return
+                }
+
+                // Payment return hosts / success pages / profiles / browse.
+                if isSignupFinishDestination(path, full: full) {
+                    parent.statusHint = "Account ready — signing you into the app…"
+                    await finishHandoff(from: webView)
+                    return
+                }
+
+                // After leaving package for our origin, hand off when access is live.
+                if activated {
+                    parent.statusHint = "Account ready — signing you into the app…"
+                    await finishHandoff(from: webView)
                 }
 
             case .account:
-                // Manual Done — never auto-finish account management browser.
                 return
             }
         }
-    }
-}
 
-enum CookieBridge {
-    static func injectSharedCookies(into store: WKWebsiteDataStore) async {
-        guard let cookies = HTTPCookieStorage.shared.cookies else { return }
-        let jar = store.httpCookieStore
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let group = DispatchGroup()
-            for cookie in cookies {
-                group.enter()
-                jar.setCookie(cookie) { group.leave() }
-            }
-            group.notify(queue: .main) { continuation.resume() }
+        private func isEarlySignupForm(_ path: String) -> Bool {
+            if path.contains("/auth/signup/terms") { return true }
+            if path == "/auth/signup" { return true }
+            if path.hasPrefix("/auth/signin") { return true }
+            return false
         }
-    }
 
-    static func exportCookies(from store: WKWebsiteDataStore) async {
-        let cookies: [HTTPCookie] = await withCheckedContinuation { continuation in
-            store.httpCookieStore.getAllCookies { cookies in
-                continuation.resume(returning: cookies)
+        /// True while the user is still on a payment processor (do not hand off yet).
+        private func isPaymentInProgress(host: String, path: String, full: String) -> Bool {
+            let paymentHosts = ["payfast", "paypal", "stripe", "checkout.stripe"]
+            let onGateway = paymentHosts.contains(where: { host.contains($0) })
+            if !onGateway { return false }
+            // Allow handoff only when gateway itself signals completion/return.
+            if full.contains("payment_status=complete")
+                || full.contains("payment_status=success")
+                || full.contains("payment_status=cancelled")
+                || path.contains("return")
+                || path.contains("success")
+                || path.contains("complete")
+                || path.contains("done")
+            {
+                return false
             }
+            return true
         }
-        let storage = HTTPCookieStorage.shared
-        for cookie in cookies {
-            let host = cookie.domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))
-            guard host.contains("story-time.online") || cookie.domain.contains("story-time") else { continue }
-            storage.setCookie(cookie)
+
+        private func isSignupFinishDestination(_ path: String, full: String) -> Bool {
+            if path == "/profiles" || path.hasPrefix("/profiles/") { return true }
+            if path == "/browse" || path.hasPrefix("/browse/") { return true }
+            if path.contains("/payments/return") || path.contains("/payment/return") { return true }
+            if path.contains("/payments/success") || path.contains("/payment/success") { return true }
+            if path.contains("onboarding") && (full.contains("complete") || full.contains("success") || full.contains("paid=1")) {
+                return true
+            }
+            return false
+        }
+
+        private func hasActivatedViewerAccess() async -> Bool {
+            if let sub = try? await ViewerAPI.shared.fetchSubscription() {
+                let status = sub.status?.uppercased() ?? ""
+                if !status.isEmpty {
+                    if ["ACTIVE", "TRIALING", "PAID", "PENDING", "INCOMPLETE"].contains(status) {
+                        return true
+                    }
+                    if status.contains("ACTIVE") || status.contains("PAID") { return true }
+                }
+                if sub.isPayPerViewModel { return true }
+                if let plan = sub.plan, !plan.isEmpty { return true }
+            }
+            return false
+        }
+
+        @MainActor
+        private func finishHandoff(from webView: WKWebView) async {
+            guard !didNotifySession else { return }
+            // Final cookie pull while WK is still alive (twice with a short beat).
+            await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            await CookieBridge.exportCookies(from: webView.configuration.websiteDataStore)
+            // Default store is the same instance for signup, but export again for safety.
+            await CookieBridge.exportCookies(from: WKWebsiteDataStore.default())
+
+            // Verify once more before dismissing — only finish if native session is real.
+            if case .signUp = parent.mode {
+                guard let session = try? await AuthService.shared.adoptWebSession(),
+                      session.user != nil
+                else { return }
+            }
+
+            didNotifySession = true
+            pollTask?.cancel()
+            parent.onSessionEstablished?()
         }
     }
 }

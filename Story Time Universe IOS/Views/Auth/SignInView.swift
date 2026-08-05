@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 
 struct SignInView: View {
     @EnvironmentObject private var appState: AppState
@@ -121,7 +122,21 @@ struct SignInView: View {
                 glow = true
             }
         }
-        .sheet(item: $browser) { item in
+        .sheet(item: $browser, onDismiss: {
+            // Payment finished but auto-detect missed, or user closed after activation.
+            Task {
+                if appState.session?.user != nil {
+                    if appState.route != .profiles && appState.route != .main {
+                        appState.route = .profiles
+                    }
+                    return
+                }
+                let ok = await appState.completeWebAuth()
+                if !ok, mode == .signUp, appState.session?.user == nil {
+                    errorMessage = "If you finished signup, tap Sign In with the same email and password."
+                }
+            }
+        }) { item in
             if item.isSafariOnly {
                 SafariView(url: item.url)
                     .ignoresSafeArea()
@@ -132,8 +147,14 @@ struct SignInView: View {
                     mode: item.mode
                 ) {
                     Task {
-                        await appState.completeWebAuth()
+                        // One more default-store export + robust session adopt.
+                        await CookieBridge.exportCookies(from: WKWebsiteDataStore.default())
+                        let ok = await appState.completeWebAuth()
                         browser = nil
+                        if !ok, appState.session?.user == nil {
+                            errorMessage = "Account may be ready — sign in with the email and password you just created."
+                            mode = .signIn
+                        }
                     }
                 }
             }
@@ -260,7 +281,7 @@ struct SignInView: View {
                     .shadow(color: Theme.accent.opacity(0.35), radius: 16, y: 8)
             }
 
-            Text("You’ll complete terms and payment in a secure window. Stay there until finished — then the app signs you in.")
+            Text("You’ll complete terms and payment in a secure window. When payment finishes, this app signs you in automatically and you’ll pick a profile.")
                 .font(.caption)
                 .foregroundStyle(Theme.muted)
                 .multilineTextAlignment(.center)
@@ -269,14 +290,27 @@ struct SignInView: View {
 
     private func openSignUpBrowser() {
         errorMessage = nil
-        // Ensure signup never inherits a prior web session into the app cookie jar.
+        // Fresh jar so a prior session cannot masquerade as the new user.
         APIClient.shared.clearCookies()
-        browser = BrowserSheet(
-            url: AppConfig.viewerSignUpURLForApp,
-            title: "Create Account",
-            mode: .signUp,
-            isSafariOnly: false
-        )
+        // Also clear default WK data for our origin so signup never inherits old NextAuth cookies.
+        WKWebsiteDataStore.default().fetchDataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes()) { records in
+            let relevant = records.filter {
+                $0.displayName.contains("story-time") || $0.displayName.contains("storytime")
+            }
+            WKWebsiteDataStore.default().removeData(
+                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                for: relevant
+            ) {
+                DispatchQueue.main.async {
+                    self.browser = BrowserSheet(
+                        url: AppConfig.viewerSignUpURLForApp,
+                        title: "Create Account",
+                        mode: .signUp,
+                        isSafariOnly: false
+                    )
+                }
+            }
+        }
     }
 
     private func modeTab(_ value: Mode, title: String) -> some View {

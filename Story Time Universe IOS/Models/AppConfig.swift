@@ -9,7 +9,8 @@ enum AppConfig {
 
     static let viewerSignInURL = URL(string: "https://story-time.online/auth/signin")!
     /// Canonical signup entry (terms gate first). source marks iOS so web can adapt later.
-    static let viewerSignUpURLForApp = URL(string: "https://story-time.online/auth/signup?source=ios_app&platform=ios")!
+    /// Marks iOS app signup so production can redirect to viewer destinations after payment.
+    static let viewerSignUpURLForApp = URL(string: "https://story-time.online/auth/signup?source=ios_app&platform=ios&callback=/profiles")!
     static let viewerSignUpURL = viewerSignUpURLForApp
     static let forgotPasswordURL = URL(string: "https://story-time.online/auth/forgot-password")!
     static let packageOnboardingURL = URL(string: "https://story-time.online/onboarding/package")!

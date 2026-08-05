@@ -97,6 +97,13 @@ final class APIClient {
             request.setValue("application/json", forHTTPHeaderField: "Accept")
         }
 
+        // Force-auth cookies onto Story Time API calls. URLSession domain matching is sometimes
+        // picky with NextAuth `__Secure-` tokens exported from WKWebView — this makes signup
+        // handoff reliable.
+        if let cookieHeader = CookieBridge.cookieHeader(for: url) {
+            request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+        }
+
         if let jsonBody {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: jsonBody)

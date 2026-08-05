@@ -118,6 +118,18 @@ actor AuthService {
 
     /// After in-app Safari/Web auth flow, re-read cookie session.
     func adoptWebSession() async throws -> AuthSession? {
-        try await fetchSession()
+        // Cache-bust so we never adopt a stale null session body after cookie export.
+        let bust = URLQueryItem(name: "_ts", value: String(Int(Date().timeIntervalSince1970 * 1000)))
+        let (data, response) = try await api.request(path: "api/auth/session", query: [bust])
+        guard response.statusCode == 200 else {
+            if response.statusCode == 401 { return nil }
+            throw api.parseAPIError(data: data, status: response.statusCode)
+        }
+        if data.isEmpty || String(data: data, encoding: .utf8) == "null" {
+            return nil
+        }
+        let session = try api.decode(AuthSession.self, from: data)
+        guard session.user?.email != nil || session.user?.id != nil else { return nil }
+        return session
     }
 }

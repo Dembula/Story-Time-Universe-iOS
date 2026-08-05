@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import WebKit
 
 @MainActor
 final class AppState: ObservableObject {
@@ -23,6 +24,8 @@ final class AppState: ObservableObject {
     @Published var selectedMainTab: MainTab = .home
 
     private let network = NetworkMonitor.shared
+    /// Coalesces concurrent signup-dismiss + handoff-callback adoption attempts.
+    private var webAuthAdoptionTask: Task<Bool, Never>?
 
     /// Always land on profiles after auth — never auto-enter last profile on launch.
     func bootstrap() async {
@@ -126,21 +129,52 @@ final class AppState: ObservableObject {
     }
 
     /// Called after successful browser-based sign-up / payment handoff.
-    func completeWebAuth() async {
-        isBusy = true
-        defer { isBusy = false }
-        do {
-            if let session = try await AuthService.shared.adoptWebSession(), session.user != nil {
-                self.session = session
-                APIClient.shared.setViewerProfileCookie(nil)
-                activeProfile = nil
-                subscription = try? await ViewerAPI.shared.fetchSubscription()
-                await ViewerAPI.shared.reportSessionTelemetry()
-                route = .profiles
-            }
-        } catch {
-            bootstrapError = error.localizedDescription
+    /// Retries cookie session adoption so late-arriving NextAuth cookies still work.
+    /// Concurrent callers (sheet onDismiss + success callback) share one adoption run.
+    @discardableResult
+    func completeWebAuth() async -> Bool {
+        if let existing = webAuthAdoptionTask {
+            return await existing.value
         }
+        // Already signed in from a previous handoff.
+        if session?.user != nil {
+            route = .profiles
+            return true
+        }
+
+        let task = Task { @MainActor () -> Bool in
+            self.isBusy = true
+            defer { self.isBusy = false }
+
+            // Export from the default WK store (signup uses this store).
+            await CookieBridge.exportCookies(from: WKWebsiteDataStore.default())
+
+            for attempt in 0..<8 {
+                if attempt > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(350_000_000 * attempt))
+                    await CookieBridge.exportCookies(from: WKWebsiteDataStore.default())
+                }
+                do {
+                    if let session = try await AuthService.shared.adoptWebSession(), session.user != nil {
+                        self.session = session
+                        APIClient.shared.setViewerProfileCookie(nil)
+                        self.activeProfile = nil
+                        self.subscription = try? await ViewerAPI.shared.fetchSubscription()
+                        await ViewerAPI.shared.reportSessionTelemetry()
+                        self.route = .profiles
+                        self.bootstrapError = nil
+                        return true
+                    }
+                } catch {
+                    self.bootstrapError = error.localizedDescription
+                }
+            }
+            return false
+        }
+        webAuthAdoptionTask = task
+        let result = await task.value
+        webAuthAdoptionTask = nil
+        return result
     }
 
     func deleteAccount(password: String) async throws {
