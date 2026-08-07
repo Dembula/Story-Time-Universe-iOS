@@ -15,16 +15,11 @@ struct HomeView: View {
     @State private var isLoadInFlight = false
     @State private var queuedForceReload = false
     @State private var isResolvingAccess = false
-    @State private var ppvCheckout: HomePPVCheckout?
     @State private var pendingPlayItem: ContentItem?
     @State private var accessError: String?
     @State private var ppvFinishInFlight = false
-
-    private struct HomePPVCheckout: Identifiable {
-        let id = UUID()
-        let url: URL
-        let contentId: String
-    }
+    @State private var showPPVPaywall = false
+    @State private var ppvTitle: String?
 
     private var profileAge: Int? { appState.activeProfile?.age }
 
@@ -42,7 +37,7 @@ struct HomeView: View {
         defer { isResolvingAccess = false }
 
         if appState.subscription == nil {
-            appState.subscription = try? await ViewerAPI.shared.fetchSubscription()
+            await appState.refreshSubscriptionFromServer()
         }
 
         let access = await ViewerAPI.shared.resolveTitleAccess(
@@ -53,25 +48,26 @@ struct HomeView: View {
         switch access {
         case .playable:
             playingContent = item
-        case .requiresCheckout(let url):
+        case .requiresInAppPurchase:
             pendingPlayItem = item
-            ppvCheckout = HomePPVCheckout(url: url, contentId: item.id)
+            ppvTitle = item.title
+            showPPVPaywall = true
         case .blocked(let message):
             accessError = message
         }
     }
 
-    private func handlePPVFinished(allowRetryCheckout: Bool) async {
+    private func handlePPVPurchaseFinished() async {
         guard !ppvFinishInFlight else { return }
         guard let item = pendingPlayItem else { return }
         ppvFinishInFlight = true
         defer { ppvFinishInFlight = false }
 
         pendingPlayItem = nil
-        ppvCheckout = nil
+        showPPVPaywall = false
         isResolvingAccess = true
         defer { isResolvingAccess = false }
-        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        try? await Task.sleep(nanoseconds: 800_000_000)
         let access = await ViewerAPI.shared.resolveTitleAccess(
             contentId: item.id,
             isPayPerViewAccount: true,
@@ -81,12 +77,8 @@ struct HomeView: View {
         case .playable:
             playingContent = item
             accessError = nil
-        case .requiresCheckout(let url):
-            pendingPlayItem = item
-            accessError = "Complete payment to unlock this title, then press Play again."
-            if allowRetryCheckout {
-                ppvCheckout = HomePPVCheckout(url: url, contentId: item.id)
-            }
+        case .requiresInAppPurchase:
+            accessError = "Purchase completed with Apple — if the title isn’t unlocked yet, wait a moment and press Play again."
         case .blocked(let message):
             accessError = message
         }
@@ -158,16 +150,16 @@ struct HomeView: View {
             }
             .fullScreenCover(item: $playingContent) { item in
                 PlayerContainerView(contentId: item.id, title: item.title)
+                    .environmentObject(appState)
             }
-            .sheet(item: $ppvCheckout, onDismiss: {
-                Task { await handlePPVFinished(allowRetryCheckout: false) }
-            }) { sheet in
-                AuthenticatedWebBrowser(
-                    url: sheet.url,
-                    title: "Unlock Title",
-                    mode: .checkout(contentId: sheet.contentId)
-                ) {
-                    Task { await handlePPVFinished(allowRetryCheckout: false) }
+            .sheet(isPresented: $showPPVPaywall) {
+                if let item = pendingPlayItem {
+                    SubscriptionPaywallView(
+                        context: .ppv(contentId: item.id, title: ppvTitle)
+                    ) {
+                        Task { await handlePPVPurchaseFinished() }
+                    }
+                    .environmentObject(appState)
                 }
             }
             .overlay {

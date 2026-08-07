@@ -1,26 +1,25 @@
 import SwiftUI
-import WebKit
 
 struct SignInView: View {
     @EnvironmentObject private var appState: AppState
     @State private var mode: Mode = .signIn
     @State private var email = ""
     @State private var password = ""
+    @State private var name = ""
     @State private var errorMessage: String?
     @State private var showPassword = false
+    @State private var acceptedTerms = false
     @State private var glow = false
     @State private var browser: BrowserSheet?
     @FocusState private var focusedField: Field?
 
-    private enum Field { case email, password }
+    private enum Field { case name, email, password }
     private enum Mode: String { case signIn, signUp }
 
     private struct BrowserSheet: Identifiable {
         let id = UUID()
         let url: URL
         let title: String
-        let mode: WebBrowserMode
-        let isSafariOnly: Bool
     }
 
     var body: some View {
@@ -79,7 +78,7 @@ struct SignInView: View {
                         if mode == .signIn {
                             signInForm
                         } else {
-                            signUpPrompt
+                            signUpForm
                         }
                     }
                     .padding(20)
@@ -122,46 +121,13 @@ struct SignInView: View {
                 glow = true
             }
         }
-        .sheet(item: $browser, onDismiss: {
-            // Payment finished but auto-detect missed, or user closed after activation.
-            Task {
-                if appState.session?.user != nil {
-                    if appState.route != .profiles && appState.route != .main {
-                        appState.route = .profiles
-                    }
-                    return
-                }
-                let ok = await appState.completeWebAuth()
-                if !ok, mode == .signUp, appState.session?.user == nil {
-                    errorMessage = "If you finished signup, tap Sign In with the same email and password."
-                }
-            }
-        }) { item in
-            if item.isSafariOnly {
-                SafariView(url: item.url)
-                    .ignoresSafeArea()
-            } else {
-                AuthenticatedWebBrowser(
-                    url: item.url,
-                    title: item.title,
-                    mode: item.mode
-                ) {
-                    Task {
-                        // One more default-store export + robust session adopt.
-                        await CookieBridge.exportCookies(from: WKWebsiteDataStore.default())
-                        let ok = await appState.completeWebAuth()
-                        browser = nil
-                        if !ok, appState.session?.user == nil {
-                            errorMessage = "Account may be ready — sign in with the email and password you just created."
-                            mode = .signIn
-                        }
-                    }
-                }
-            }
+        .sheet(item: $browser) { item in
+            SafariView(url: item.url)
+                .ignoresSafeArea()
         }
     }
 
-    // MARK: - Sign In (native only — no web browser CTA)
+    // MARK: - Sign In
 
     private var signInForm: some View {
         VStack(spacing: 14) {
@@ -231,12 +197,7 @@ struct SignInView: View {
             .opacity(email.isEmpty || password.isEmpty ? 0.55 : 1)
 
             Button {
-                browser = BrowserSheet(
-                    url: AppConfig.forgotPasswordURL,
-                    title: "Reset Password",
-                    mode: .account,
-                    isSafariOnly: true
-                )
+                browser = BrowserSheet(url: AppConfig.forgotPasswordURL, title: "Reset Password")
             } label: {
                 Text("Forgot password?")
                     .font(.footnote.weight(.medium))
@@ -246,14 +207,76 @@ struct SignInView: View {
         }
     }
 
-    // MARK: - Sign Up (in-app web is the natural flow)
+    // MARK: - Sign Up (native account + App Store plan)
 
-    private var signUpPrompt: some View {
-        VStack(spacing: 16) {
-            Text("New accounts are created securely on Story Time — including terms and payment — then you return here to pick a profile.")
+    private var signUpForm: some View {
+        VStack(spacing: 14) {
+            Text("Create your account here, then choose a plan with Apple In‑App Purchase. Payment never leaves the App Store.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.muted)
                 .multilineTextAlignment(.center)
+
+            fieldCard {
+                TextField("Name (optional)", text: $name)
+                    .textContentType(.name)
+                    .focused($focusedField, equals: .name)
+                    .foregroundStyle(Theme.foreground)
+            }
+
+            fieldCard {
+                TextField("Email", text: $email)
+                    .textContentType(.username)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($focusedField, equals: .email)
+                    .foregroundStyle(Theme.foreground)
+            }
+
+            fieldCard {
+                HStack {
+                    Group {
+                        if showPassword {
+                            TextField("Password (min 8 characters)", text: $password)
+                        } else {
+                            SecureField("Password (min 8 characters)", text: $password)
+                        }
+                    }
+                    .textContentType(.newPassword)
+                    .focused($focusedField, equals: .password)
+                    .foregroundStyle(Theme.foreground)
+
+                    Button { showPassword.toggle() } label: {
+                        Image(systemName: showPassword ? "eye.slash" : "eye")
+                            .foregroundStyle(Theme.muted)
+                    }
+                }
+            }
+
+            Toggle(isOn: $acceptedTerms) {
+                HStack(spacing: 4) {
+                    Text("I agree to the")
+                        .foregroundStyle(Theme.muted)
+                    Button("Terms of Use") {
+                        browser = BrowserSheet(
+                            url: URL(string: "https://story-time.online/terms")!,
+                            title: "Terms"
+                        )
+                    }
+                    .foregroundStyle(Theme.accent)
+                    Text("and")
+                        .foregroundStyle(Theme.muted)
+                    Button("Privacy") {
+                        browser = BrowserSheet(
+                            url: URL(string: "https://story-time.online/privacy")!,
+                            title: "Privacy"
+                        )
+                    }
+                    .foregroundStyle(Theme.accent)
+                }
+                .font(.caption)
+            }
+            .toggleStyle(SwitchToggleStyle(tint: Theme.accent))
 
             if let errorMessage {
                 Text(errorMessage)
@@ -263,54 +286,43 @@ struct SignInView: View {
             }
 
             Button {
-                openSignUpBrowser()
+                Task { await submitSignUp() }
             } label: {
-                Label("Continue to Create Account", systemImage: "arrow.up.forward.app.fill")
-                    .font(.headline.weight(.bold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(
-                        LinearGradient(
-                            colors: [Theme.accentGold, Theme.accent],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+                Group {
+                    if appState.isBusy {
+                        ProgressView().tint(.black)
+                    } else {
+                        Text("Create Account")
+                            .fontWeight(.bold)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(
+                    LinearGradient(
+                        colors: [Theme.accentGold, Theme.accent],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
-                    .foregroundStyle(.black)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .shadow(color: Theme.accent.opacity(0.35), radius: 16, y: 8)
+                )
+                .foregroundStyle(.black)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: Theme.accent.opacity(0.35), radius: 16, y: 8)
             }
+            .disabled(appState.isBusy || !canSubmitSignUp)
+            .opacity(canSubmitSignUp ? 1 : 0.55)
 
-            Text("You’ll complete terms and payment in a secure window. When payment finishes, this app signs you in automatically and you’ll pick a profile.")
+            Text("After your account is created you’ll pick a plan via Apple. Subscriptions are managed in Settings → Apple ID → Subscriptions.")
                 .font(.caption)
                 .foregroundStyle(Theme.muted)
                 .multilineTextAlignment(.center)
         }
     }
 
-    private func openSignUpBrowser() {
-        errorMessage = nil
-        // Fresh jar so a prior session cannot masquerade as the new user.
-        APIClient.shared.clearCookies()
-        // Also clear default WK data for our origin so signup never inherits old NextAuth cookies.
-        WKWebsiteDataStore.default().fetchDataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes()) { records in
-            let relevant = records.filter {
-                $0.displayName.contains("story-time") || $0.displayName.contains("storytime")
-            }
-            WKWebsiteDataStore.default().removeData(
-                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
-                for: relevant
-            ) {
-                DispatchQueue.main.async {
-                    self.browser = BrowserSheet(
-                        url: AppConfig.viewerSignUpURLForApp,
-                        title: "Create Account",
-                        mode: .signUp,
-                        isSafariOnly: false
-                    )
-                }
-            }
-        }
+    private var canSubmitSignUp: Bool {
+        acceptedTerms
+            && !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && password.count >= 8
     }
 
     private func modeTab(_ value: Mode, title: String) -> some View {
@@ -318,12 +330,6 @@ struct SignInView: View {
             withAnimation(.easeInOut(duration: 0.2)) {
                 mode = value
                 errorMessage = nil
-                // Natural signup flow: open web immediately when switching to Sign Up
-                if value == .signUp {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        openSignUpBrowser()
-                    }
-                }
             }
         } label: {
             Text(title)
@@ -350,6 +356,24 @@ struct SignInView: View {
         focusedField = nil
         do {
             try await appState.signIn(email: email, password: password)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func submitSignUp() async {
+        errorMessage = nil
+        focusedField = nil
+        guard canSubmitSignUp else {
+            errorMessage = "Accept the Terms and enter a password of at least 8 characters."
+            return
+        }
+        do {
+            try await appState.signUp(
+                email: email,
+                password: password,
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : name
+            )
         } catch {
             errorMessage = error.localizedDescription
         }

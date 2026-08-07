@@ -21,15 +21,8 @@ struct ContentDetailView: View {
     @State private var selectedRelated: ContentItem?
     @State private var selectedPerson: PersonRoute?
     @State private var isResolvingAccess = false
-    @State private var ppvCheckout: PPVCheckoutSheet?
     @State private var pendingPlayback: PlaybackRequest?
-    @State private var ppvFinishInFlight = false
-
-    private struct PPVCheckoutSheet: Identifiable {
-        let id = UUID()
-        let url: URL
-        let contentId: String
-    }
+    @State private var showPPVPaywall = false
 
     private var displayTitle: String {
         detail?.title ?? seed?.title ?? ""
@@ -111,19 +104,15 @@ struct ContentDetailView: View {
                 isTrailer: request.isTrailer,
                 episodes: request.isTrailer ? [] : episodePlaybackInfos
             )
+            .environmentObject(appState)
         }
-        .sheet(item: $ppvCheckout, onDismiss: {
-            // Covers successful auto-close and user Close after paying (if auto-detect was slow).
-            Task { await handlePPVCheckoutFinished(allowRetryCheckout: false) }
-        }) { sheet in
-            AuthenticatedWebBrowser(
-                url: sheet.url,
-                title: "Unlock Title",
-                mode: .checkout(contentId: sheet.contentId)
+        .sheet(isPresented: $showPPVPaywall) {
+            SubscriptionPaywallView(
+                context: .ppv(contentId: contentId, title: displayTitle)
             ) {
-                // Auto-dismiss path — onDismiss will also run; handler is idempotent.
-                Task { await handlePPVCheckoutFinished(allowRetryCheckout: false) }
+                Task { await handlePPVPurchaseFinished() }
             }
+            .environmentObject(appState)
         }
         .overlay {
             if isResolvingAccess {
@@ -221,7 +210,7 @@ struct ContentDetailView: View {
 
             // Subscription refresh so PPV model flag is current.
             if appState.subscription == nil {
-                appState.subscription = try? await ViewerAPI.shared.fetchSubscription()
+                await appState.refreshSubscriptionFromServer()
             }
 
             let access = await ViewerAPI.shared.resolveTitleAccess(
@@ -233,27 +222,22 @@ struct ContentDetailView: View {
             switch access {
             case .playable:
                 playbackRequest = request
-            case .requiresCheckout(let url):
+            case .requiresInAppPurchase:
                 pendingPlayback = request
-                ppvCheckout = PPVCheckoutSheet(url: url, contentId: contentId)
+                showPPVPaywall = true
             case .blocked(let message):
                 errorMessage = message
             }
         }
     }
 
-    private func handlePPVCheckoutFinished(allowRetryCheckout: Bool) async {
-        // Single-flight: avoid onDismiss + auto-close racing.
-        guard !ppvFinishInFlight else { return }
+    private func handlePPVPurchaseFinished() async {
         guard let pending = pendingPlayback else { return }
-        ppvFinishInFlight = true
-        defer { ppvFinishInFlight = false }
-
         pendingPlayback = nil
-        ppvCheckout = nil
+        showPPVPaywall = false
         isResolvingAccess = true
         defer { isResolvingAccess = false }
-        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        try? await Task.sleep(nanoseconds: 800_000_000)
 
         let access = await ViewerAPI.shared.resolveTitleAccess(
             contentId: contentId,
@@ -264,12 +248,8 @@ struct ContentDetailView: View {
         case .playable:
             playbackRequest = pending
             errorMessage = nil
-        case .requiresCheckout(let url):
-            pendingPlayback = pending
-            errorMessage = "Complete payment to unlock this title, then press Play again."
-            if allowRetryCheckout {
-                ppvCheckout = PPVCheckoutSheet(url: url, contentId: contentId)
-            }
+        case .requiresInAppPurchase:
+            errorMessage = "If the title isn’t unlocked yet, wait a moment and press Play again."
         case .blocked(let message):
             errorMessage = message
         }

@@ -152,7 +152,7 @@ final class APIClient {
             return .server(message)
         }
         if status == 401 { return .unauthorized }
-        if status == 402 { return .paymentRequired("Complete your subscription on the web.") }
+        if status == 402 { return .paymentRequired("Subscribe with Apple In‑App Purchase to continue.") }
         return .server("Request failed (\(status)).")
     }
 }

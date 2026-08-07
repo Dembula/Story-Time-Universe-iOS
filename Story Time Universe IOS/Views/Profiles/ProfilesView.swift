@@ -207,19 +207,27 @@ struct ProfilesView: View {
     }
 
     private var paymentBanner: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Subscription needs attention")
-                .font(.headline)
-                .foregroundStyle(Theme.foreground)
-            Text("Your account access may be limited until your subscription is active again.")
-                .font(.footnote)
-                .foregroundStyle(Theme.muted)
+        Button {
+            appState.presentPaywall(.reactivate)
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Subscribe to continue")
+                    .font(.headline)
+                    .foregroundStyle(Theme.foreground)
+                Text("Choose a plan with Apple In‑App Purchase to activate streaming access.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.muted)
+                Text("View plans →")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.accentSoft)
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.accent.opacity(0.35)))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.accentSoft)
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.accent.opacity(0.35)))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .buttonStyle(.plain)
     }
 
     private func load() async {
@@ -248,7 +256,10 @@ struct ProfilesView: View {
         }
         backdropIndex = 0
         ImagePrefetcher.prefetchPosters(backdropItems)
-        appState.subscription = try? await ViewerAPI.shared.fetchSubscription()
+        await appState.refreshSubscriptionFromServer()
+        if appState.needsPaymentAttention {
+            // Soft nudge on profile screen — does not block browsing profiles.
+        }
     }
 
     private func cycleBackdrops() async {
@@ -283,6 +294,7 @@ struct ProfilesView: View {
             errorMessage = error.localizedDescription
             if let apiError = error as? APIError, case .paymentRequired = apiError {
                 pinProfile = nil
+                appState.presentPaywall(.reactivate)
             }
         }
     }

@@ -216,9 +216,9 @@ actor ViewerAPI {
         return try api.decode(PlaybackBundle.self, from: data)
     }
 
-    /// Pay Per View unlock. Production creates a PENDING access row and returns a PayFast `checkoutUrl`
-    /// when the title is not already owned. When owned, `alreadyOwned` is true and playback can start.
-    func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
+/// Pay Per View unlock. Production creates a PENDING access row; when the title is not
+/// already owned, iOS routes the user to StoreKit instead of any web `checkoutUrl`.
+func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
         let (data, response) = try await api.request(
             path: "api/viewer/ppv",
             method: "POST",
@@ -231,6 +231,7 @@ actor ViewerAPI {
     }
 
     /// Gate Play for PPV accounts before opening the player.
+    /// iOS never surfaces web/PayFast checkout URLs (App Store 3.1.1) — only StoreKit unlock.
     func resolveTitleAccess(contentId: String, isPayPerViewAccount: Bool, isTrailer: Bool) async -> TitleAccessResult {
         if isTrailer { return .playable }
         guard isPayPerViewAccount else { return .playable }
@@ -240,24 +241,117 @@ actor ViewerAPI {
             if result.alreadyOwned == true {
                 return .playable
             }
-            if let url = result.checkoutURL {
-                return .requiresCheckout(url)
+            // Any server request for payment becomes an in-app purchase path on iOS.
+            if result.requiresPayment == true
+                || result.checkoutURL != nil
+                || result.success == false
+            {
+                return .requiresInAppPurchase(contentId: contentId)
             }
-            // Some backends nest URL under a relative path or return absolute string only on error field.
-            if result.requiresPayment == true || result.success == false {
-                return .blocked(result.error ?? "Complete payment to unlock this title.")
-            }
-            // Unexpected empty success — attempt play; player will re-error if needed.
             return .playable
         } catch let error as APIError {
-            // Fall back: if server insists on purchase, still allow play attempt to surface unlock UI.
             if case .paymentRequired = error {
-                return .blocked(error.localizedDescription)
+                return .requiresInAppPurchase(contentId: contentId)
             }
             return .blocked(error.localizedDescription)
         } catch {
             return .blocked(error.localizedDescription)
         }
+    }
+
+    // MARK: - Apple In-App Purchase activation
+
+    /// Attach a verified App Store subscription transaction to the signed-in viewer.
+    /// Production endpoint contract (implement on web):
+    /// `POST /api/viewer/apple/activate` with signed transaction fields → activates plan.
+    func activateAppleSubscription(
+        productId: String,
+        transactionId: String,
+        originalTransactionId: String,
+        signedTransactionInfo: String,
+        environment: String,
+        planCode: String
+    ) async throws {
+        let body: [String: Any] = [
+            "productId": productId,
+            "transactionId": transactionId,
+            "originalTransactionId": originalTransactionId,
+            "signedTransactionInfo": signedTransactionInfo,
+            "jwsRepresentation": signedTransactionInfo,
+            "environment": environment,
+            "plan": planCode,
+            "planCode": planCode,
+            "platform": "ios",
+            "source": "ios_app",
+        ]
+        try await postAppleActivate(candidates: [
+            "api/viewer/apple/activate",
+            "api/viewer/apple/subscription",
+            "api/viewer/iap/subscription",
+            "api/billing/apple/activate",
+            "api/payments/apple/activate",
+        ], body: body)
+    }
+
+    /// Attach a verified App Store PPV consumable to a content id.
+    func activateApplePPV(
+        contentId: String,
+        productId: String,
+        transactionId: String,
+        originalTransactionId: String,
+        signedTransactionInfo: String,
+        environment: String
+    ) async throws {
+        let body: [String: Any] = [
+            "contentId": contentId,
+            "productId": productId,
+            "transactionId": transactionId,
+            "originalTransactionId": originalTransactionId,
+            "signedTransactionInfo": signedTransactionInfo,
+            "jwsRepresentation": signedTransactionInfo,
+            "environment": environment,
+            "platform": "ios",
+            "source": "ios_app",
+            "kind": "ppv",
+        ]
+        try await postAppleActivate(candidates: [
+            "api/viewer/apple/ppv",
+            "api/viewer/apple/activate",
+            "api/viewer/iap/ppv",
+            "api/billing/apple/ppv",
+            "api/payments/apple/ppv",
+        ], body: body)
+    }
+
+    /// Tries known endpoints; succeeds on first 2xx. Treats 404 as “try next”.
+    private func postAppleActivate(candidates: [String], body: [String: Any]) async throws {
+        var lastError: Error = APIError.server("Apple purchase could not be linked to your account.")
+        var sawNotFound = true
+        for path in candidates {
+            do {
+                let (data, response) = try await api.request(path: path, method: "POST", jsonBody: body)
+                if (200...299).contains(response.statusCode) {
+                    return
+                }
+                if response.statusCode == 404 || response.statusCode == 405 {
+                    continue
+                }
+                sawNotFound = false
+                lastError = api.parseAPIError(data: data, status: response.statusCode)
+            } catch {
+                lastError = error
+                sawNotFound = false
+            }
+        }
+        if sawNotFound {
+            // Backend not deployed yet — still surface a clear operator message.
+            // StoreKit transaction remains unfinished only when activate throws before finish;
+            // callers that need strict gate should fail. We fail closed with guidance.
+            throw APIError.server(
+                "Purchase succeeded with Apple, but account activation is not ready yet. Contact support@story-time.online with your Apple receipt."
+            )
+        }
+        throw lastError
     }
 
     func fetchWatchProgress(contentId: String) async throws -> (position: Int, duration: Int?) {

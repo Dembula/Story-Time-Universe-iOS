@@ -1,0 +1,225 @@
+{
+  "identifier" : "StoryTimeProducts",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "STU-PPV-001",
+      "localizations" : [
+        {
+          "description" : "Unlock one title on Story Time Universe",
+          "displayName" : "Title Unlock",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.storytime.universe.ppv.unlock",
+      "referenceName" : "Title Unlock",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_storeKitErrors" : [
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Load Products"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Purchase"
+      }
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "STU_SUB_GROUP",
+      "localizations" : [
+        {
+          "description" : "Story Time Universe streaming plans",
+          "displayName" : "Story Time Universe",
+          "locale" : "en_US"
+        }
+      ],
+      "name" : "Story Time Universe",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "4.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "STU-BASE-M",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "1 profile. Stream the Story Time catalogue.",
+              "displayName" : "Base Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.storytime.universe.sub.base.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Base Monthly",
+          "subscriptionGroupID" : "STU_SUB_GROUP",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "9.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "STU-STD-M",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "3 profiles. Stream the Story Time catalogue.",
+              "displayName" : "Standard Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.storytime.universe.sub.standard.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Standard Monthly",
+          "subscriptionGroupID" : "STU_SUB_GROUP",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "14.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "STU-FAM-M",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "5 profiles. Stream the Story Time catalogue.",
+              "displayName" : "Family Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.storytime.universe.sub.family.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Family Monthly",
+          "subscriptionGroupID" : "STU_SUB_GROUP",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "49.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "STU-BASE-Y",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "1 profile. Billed yearly.",
+              "displayName" : "Base Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.storytime.universe.sub.base.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Base Yearly",
+          "subscriptionGroupID" : "STU_SUB_GROUP",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "99.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "STU-STD-Y",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "3 profiles. Billed yearly.",
+              "displayName" : "Standard Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.storytime.universe.sub.standard.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Standard Yearly",
+          "subscriptionGroupID" : "STU_SUB_GROUP",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "149.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "STU-FAM-Y",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "5 profiles. Billed yearly.",
+              "displayName" : "Family Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.storytime.universe.sub.family.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Family Yearly",
+          "subscriptionGroupID" : "STU_SUB_GROUP",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

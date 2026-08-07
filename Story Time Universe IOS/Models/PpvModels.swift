@@ -17,8 +17,8 @@ struct PpvCheckoutResponse: Codable, Hashable {
 enum TitleAccessResult: Equatable {
     /// Stream / player may start.
     case playable
-    /// Open this URL in the authenticated in-app browser (PayFast / checkout).
-    case requiresCheckout(URL)
+    /// Title requires a StoreKit consumable unlock (no external checkout in-app).
+    case requiresInAppPurchase(contentId: String)
     case blocked(String)
 }
 

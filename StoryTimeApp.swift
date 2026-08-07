@@ -13,6 +13,13 @@ struct StoryTimeApp: App {
                 .tint(Theme.accent)
                 .onAppear {
                     OrientationLock.unlockPortrait()
+                    StoreService.shared.start()
+                }
+                .sheet(isPresented: $appState.showPaywall) {
+                    SubscriptionPaywallView(context: appState.paywallContext) {
+                        Task { await appState.refreshSubscriptionFromServer() }
+                    }
+                    .environmentObject(appState)
                 }
         }
     }

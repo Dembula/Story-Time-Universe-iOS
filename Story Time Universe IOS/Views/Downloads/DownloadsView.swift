@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct DownloadsView: View {
+    @EnvironmentObject private var appState: AppState
     @ObservedObject private var downloads = DownloadManager.shared
     @State private var playback: DownloadPlayback?
 
@@ -54,6 +55,7 @@ struct DownloadsView: View {
                 isTrailer: false,
                 episodes: item.episodes
             )
+            .environmentObject(appState)
         }
     }
 

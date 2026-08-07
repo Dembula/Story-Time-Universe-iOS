@@ -34,15 +34,15 @@ struct AccountView: View {
 
                     settingsGroup(title: nil) {
                         settingsRow(title: "Subscription", subtitle: subscriptionSubtitle, systemImage: "rectangle.stack.fill") {
-                            openWeb(AppConfig.accountURL, title: "Subscription")
+                            appState.presentPaywall(.changePlan)
                         }
                         if appState.needsPaymentAttention {
-                            settingsRow(title: "Reactivate access", subtitle: "Update billing for your plan", systemImage: "exclamationmark.circle") {
-                                openWeb(AppConfig.renewSubscriptionURL, title: "Reactivate")
+                            settingsRow(title: "Reactivate access", subtitle: "Subscribe again with Apple", systemImage: "exclamationmark.circle") {
+                                appState.presentPaywall(.reactivate)
                             }
                         }
-                        settingsRow(title: "Change plan", subtitle: "Package and profile limits", systemImage: "arrow.triangle.2.circlepath") {
-                            openWeb(AppConfig.changePlanURL, title: "Change plan")
+                        settingsRow(title: "Change plan", subtitle: "Packages billed through the App Store", systemImage: "arrow.triangle.2.circlepath") {
+                            appState.presentPaywall(.changePlan)
                         }
                         settingsRow(title: "Downloads", subtitle: "View offline titles", systemImage: "arrow.down.circle") {
                             appState.openDownloads()
@@ -121,7 +121,7 @@ struct AccountView: View {
             .navigationTitle("Account")
             .toolbarColorScheme(.dark, for: .navigationBar)
             .task {
-                appState.subscription = try? await ViewerAPI.shared.fetchSubscription()
+                await appState.refreshSubscriptionFromServer()
             }
             .sheet(item: $webDestination) { dest in
                 AuthenticatedWebBrowser(url: dest.url, title: dest.title, mode: .account)

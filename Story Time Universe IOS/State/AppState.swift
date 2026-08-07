@@ -23,9 +23,49 @@ final class AppState: ObservableObject {
     /// Shared main tab selection so Account can jump to Downloads, Home, etc.
     @Published var selectedMainTab: MainTab = .home
 
+    /// Present subscription / PPV App Store paywall (never web checkout for digital goods).
+    @Published var showPaywall = false
+    @Published var paywallContext: PaywallContext = .subscribe
+
     private let network = NetworkMonitor.shared
     /// Coalesces concurrent signup-dismiss + handoff-callback adoption attempts.
     private var webAuthAdoptionTask: Task<Bool, Never>?
+
+    func presentPaywall(_ context: PaywallContext = .subscribe) {
+        paywallContext = context
+        showPaywall = true
+    }
+
+    func refreshSubscriptionFromServer() async {
+        subscription = try? await ViewerAPI.shared.fetchSubscription()
+        // Soft poll if Apple purchased but server lag.
+        if !hasActiveServerSubscription, StoreService.shared.hasActiveSubscriptionEntitlement {
+            for _ in 0..<5 {
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                subscription = try? await ViewerAPI.shared.fetchSubscription()
+                if hasActiveServerSubscription { break }
+            }
+        }
+    }
+
+    /// Server reports a usable subscription.
+    var hasActiveServerSubscription: Bool {
+        guard let status = subscription?.status?.uppercased() else {
+            // Some backends only send plan when active.
+            if let plan = subscription?.plan, !plan.isEmpty { return true }
+            return false
+        }
+        if ["ACTIVE", "TRIALING", "PAID", "PENDING"].contains(status) { return true }
+        if status.contains("ACTIVE") || status.contains("PAID") || status.contains("TRIAL") { return true }
+        return false
+    }
+
+    /// Combined gate: server entitlement (primary) or Apple is still syncing.
+    var hasStreamingAccess: Bool {
+        if hasActiveServerSubscription { return true }
+        if StoreService.shared.hasActiveSubscriptionEntitlement { return true }
+        return false
+    }
 
     /// Always land on profiles after auth — never auto-enter last profile on launch.
     func bootstrap() async {
@@ -59,6 +99,9 @@ final class AppState: ObservableObject {
 
             if session?.user != nil {
                 route = .profiles
+                if needsPaymentAttention {
+                    presentPaywall(.subscribe)
+                }
             } else if !DownloadManager.shared.completedRecords.isEmpty && !network.isOnline {
                 route = .offlineDownloads
             } else {
@@ -111,9 +154,12 @@ final class AppState: ObservableObject {
         self.session = session
         APIClient.shared.setViewerProfileCookie(nil)
         activeProfile = nil
-        subscription = try? await ViewerAPI.shared.fetchSubscription()
+        await refreshSubscriptionFromServer()
         await ViewerAPI.shared.reportSessionTelemetry()
         route = .profiles
+        if !hasActiveServerSubscription {
+            presentPaywall(needsPaymentAttention ? .reactivate : .subscribe)
+        }
     }
 
     func signUp(email: String, password: String, name: String?) async throws {
@@ -123,9 +169,13 @@ final class AppState: ObservableObject {
         self.session = session
         APIClient.shared.setViewerProfileCookie(nil)
         activeProfile = nil
-        subscription = try? await ViewerAPI.shared.fetchSubscription()
+        await refreshSubscriptionFromServer()
         await ViewerAPI.shared.reportSessionTelemetry()
         route = .profiles
+        // New accounts always choose a plan via App Store (3.1.1).
+        if !hasActiveServerSubscription {
+            presentPaywall(.subscribe)
+        }
     }
 
     /// Called after successful browser-based sign-up / payment handoff.
@@ -238,11 +288,18 @@ final class AppState: ObservableObject {
     }
 
     var needsPaymentAttention: Bool {
-        guard let status = subscription?.status?.uppercased() else { return false }
-        return ["PAST_DUE", "CANCELED", "CANCELLED", "EXPIRED"].contains(status)
+        if hasActiveServerSubscription { return false }
+        if session?.user == nil { return false }
+        // Active Apple entitlement while server catches up — still prompt if play fails.
+        guard let status = subscription?.status?.uppercased() else {
+            // Missing subscription object after account create / lapsed empty response.
+            return !StoreService.shared.hasActiveSubscriptionEntitlement
+        }
+        return ["PAST_DUE", "CANCELED", "CANCELLED", "EXPIRED", "INACTIVE", "NONE"].contains(status)
+            || status.isEmpty
     }
 
-    /// Pay-per-title accounts unlock films via web checkout when pressing Play / Watch.
+    /// Pay-per-title accounts unlock films via App Store consumable purchase.
     var isPayPerViewAccount: Bool {
         subscription?.isPayPerViewModel == true
     }

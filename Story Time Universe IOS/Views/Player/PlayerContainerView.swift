@@ -13,6 +13,7 @@ struct PlayerContainerView: View {
     var episodes: [EpisodePlaybackInfo] = []
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
     @StateObject private var model = PlayerViewModel()
 
     @State private var controlsVisible = true
@@ -33,17 +34,12 @@ struct PlayerContainerView: View {
     @State private var restartConsumed = false
     @State private var restartTask: Task<Void, Never>?
     @State private var didUnlockOrientation = false
-    @State private var ppvCheckoutURL: IdentifiedCheckout?
-    @State private var isRetryingAfterCheckout = false
+    @State private var showPPVPaywall = false
+    @State private var isRetryingAfterPurchase = false
     @State private var scrubPosition: Double = 0
     @State private var scrubDuration: Double = 1
 
     private let haptic = UIImpactFeedbackGenerator(style: .light)
-
-    private struct IdentifiedCheckout: Identifiable {
-        let id = UUID()
-        let url: URL
-    }
 
     var body: some View {
         ZStack {
@@ -129,16 +125,13 @@ struct PlayerContainerView: View {
             updateNearEndPrompt()
             updateScrubMirror()
         }
-        .sheet(item: $ppvCheckoutURL, onDismiss: {
-            Task { await retryPlayAfterCheckout() }
-        }) { item in
-            AuthenticatedWebBrowser(
-                url: item.url,
-                title: "Unlock Title",
-                mode: .checkout(contentId: contentId)
+        .sheet(isPresented: $showPPVPaywall) {
+            SubscriptionPaywallView(
+                context: .ppv(contentId: contentId, title: title)
             ) {
-                Task { await retryPlayAfterCheckout() }
+                Task { await retryPlayAfterPurchase() }
             }
+            .environmentObject(appState)
         }
     }
 
@@ -416,8 +409,14 @@ struct PlayerContainerView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal)
             if model.needsPurchase {
-                Button("Unlock to Watch") {
-                    Task { await unlockFromPlayer() }
+                Button(appState.isPayPerViewAccount ? "Unlock to Watch" : "Subscribe with Apple") {
+                    Task {
+                        if appState.isPayPerViewAccount {
+                            await unlockFromPlayer()
+                        } else {
+                            appState.presentPaywall(.reactivate)
+                        }
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.accent)
@@ -671,20 +670,21 @@ struct PlayerContainerView: View {
         switch access {
         case .playable:
             await model.start(contentId: contentId, episodeId: currentEpisodeId, trailer: isTrailer)
-        case .requiresCheckout(let url):
+        case .requiresInAppPurchase:
             model.isLoading = false
-            ppvCheckoutURL = IdentifiedCheckout(url: url)
+            showPPVPaywall = true
         case .blocked(let message):
             model.errorMessage = message
             model.needsPurchase = true
         }
     }
 
-    private func retryPlayAfterCheckout() async {
-        guard !isRetryingAfterCheckout else { return }
-        isRetryingAfterCheckout = true
-        defer { isRetryingAfterCheckout = false }
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
+    private func retryPlayAfterPurchase() async {
+        guard !isRetryingAfterPurchase else { return }
+        isRetryingAfterPurchase = true
+        defer { isRetryingAfterPurchase = false }
+        showPPVPaywall = false
+        try? await Task.sleep(nanoseconds: 800_000_000)
         await model.start(contentId: contentId, episodeId: currentEpisodeId, trailer: isTrailer)
         if model.player != nil { scheduleHideControls() }
     }
@@ -1015,7 +1015,7 @@ final class PlayerViewModel: ObservableObject {
             player = nil
             if case .paymentRequired = error {
                 needsPurchase = true
-                errorMessage = "Purchase this title to watch."
+                errorMessage = "A subscription or title unlock is required to watch."
             } else {
                 errorMessage = error.localizedDescription
             }
