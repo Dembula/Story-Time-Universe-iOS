@@ -15,6 +15,10 @@ enum AppConfig {
     static let forgotPasswordURL = URL(string: "https://story-time.online/auth/forgot-password")!
     static let packageOnboardingURL = URL(string: "https://story-time.online/onboarding/package")!
 
+    /// Live legal pages (production returns 200; `/terms` and `/privacy` 404).
+    static let termsOfUseURL = URL(string: "https://story-time.online/legal/terms")!
+    static let privacyPolicyURL = URL(string: "https://story-time.online/legal/privacy")!
+
     // MARK: - Account management web paths (AuthenticatedWebBrowser — cookie session)
 
     static let accountURL = webBaseURL.appendingPathComponent("browse/account")

@@ -259,8 +259,8 @@ struct SignInView: View {
                         .foregroundStyle(Theme.muted)
                     Button("Terms of Use") {
                         browser = BrowserSheet(
-                            url: URL(string: "https://story-time.online/terms")!,
-                            title: "Terms"
+                            url: AppConfig.termsOfUseURL,
+                            title: "Terms of Use"
                         )
                     }
                     .foregroundStyle(Theme.accent)
@@ -268,8 +268,8 @@ struct SignInView: View {
                         .foregroundStyle(Theme.muted)
                     Button("Privacy") {
                         browser = BrowserSheet(
-                            url: URL(string: "https://story-time.online/privacy")!,
-                            title: "Privacy"
+                            url: AppConfig.privacyPolicyURL,
+                            title: "Privacy Policy"
                         )
                     }
                     .foregroundStyle(Theme.accent)

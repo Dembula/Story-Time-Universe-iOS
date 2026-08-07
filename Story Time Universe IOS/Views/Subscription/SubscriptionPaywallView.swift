@@ -229,8 +229,8 @@ struct SubscriptionPaywallView: View {
                 .font(.caption2)
                 .foregroundStyle(Theme.muted)
             HStack(spacing: 16) {
-                Link("Terms of Use", destination: URL(string: "https://story-time.online/terms")!)
-                Link("Privacy Policy", destination: URL(string: "https://story-time.online/privacy")!)
+                Link("Terms of Use", destination: AppConfig.termsOfUseURL)
+                Link("Privacy Policy", destination: AppConfig.privacyPolicyURL)
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(Theme.accent)
