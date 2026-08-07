@@ -28,8 +28,9 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "YES">
+      <!-- Relative to this .xcscheme file: xcschemes/../Products.storekit (no spaces) -->
       <StoreKitConfigurationFileReference
-         identifier = "../../../Story Time Universe IOS/Configuration/Products.storekit">
+         identifier = "../Products.storekit">
       </StoreKitConfigurationFileReference>
    </TestAction>
    <LaunchAction
@@ -53,12 +54,12 @@
          </BuildableReference>
       </BuildableProductRunnable>
       <!--
-        Path is relative to THIS .xcscheme file:
-        xcschemes/ -> xcshareddata/ -> .xcodeproj/ -> repo root -> Story Time Universe IOS/Configuration/
-        Wrong path = StoreKit silently falls back to App Store and returns 0 products.
+        MUST live next to this scheme path with ZERO spaces in the relative path.
+        Wrong or spaced paths make StoreKit silently use App Store → 0 products.
+        File: Story Time Universe IOS.xcodeproj/xcshareddata/Products.storekit
       -->
       <StoreKitConfigurationFileReference
-         identifier = "../../../Story Time Universe IOS/Configuration/Products.storekit">
+         identifier = "../Products.storekit">
       </StoreKitConfigurationFileReference>
    </LaunchAction>
    <ProfileAction

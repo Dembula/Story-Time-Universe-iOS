@@ -1,5 +1,5 @@
 {
-  "identifier" : "A1B2C3D4-STU-PRODUCTS",
+  "identifier" : "84B8D6A2-STORYTIME-UNIVERSE",
   "nonRenewingSubscriptions" : [
 
   ],
@@ -7,7 +7,7 @@
     {
       "displayPrice" : "4.99",
       "familyShareable" : false,
-      "internalID" : "STU00001",
+      "internalID" : "64A1PPVU01",
       "localizations" : [
         {
           "description" : "Unlock one title on Story Time Universe.",
@@ -21,63 +21,14 @@
     }
   ],
   "settings" : {
-    "_applicationInternalID" : "STUAPP01",
-    "_developerTeamID" : "H6TN9459GB",
     "_failTransactionsEnabled" : false,
-    "_lastSynchronizedDate" : 756000000.0,
-    "_locale" : "en_US",
-    "_storefront" : "USA",
     "_storeKitErrors" : [
-      {
-        "current" : null,
-        "enabled" : false,
-        "name" : "Load Products"
-      },
-      {
-        "current" : null,
-        "enabled" : false,
-        "name" : "Purchase"
-      },
-      {
-        "current" : null,
-        "enabled" : false,
-        "name" : "Verification"
-      },
-      {
-        "current" : null,
-        "enabled" : false,
-        "name" : "App Store Sync"
-      },
-      {
-        "current" : null,
-        "enabled" : false,
-        "name" : "Subscription Status"
-      },
-      {
-        "current" : null,
-        "enabled" : false,
-        "name" : "App Transaction"
-      },
-      {
-        "current" : null,
-        "enabled" : false,
-        "name" : "Manage Subscriptions Sheet"
-      },
-      {
-        "current" : null,
-        "enabled" : false,
-        "name" : "Refund Request Sheet"
-      },
-      {
-        "current" : null,
-        "enabled" : false,
-        "name" : "Offer Code Redeem Sheet"
-      }
+
     ]
   },
   "subscriptionGroups" : [
     {
-      "id" : "STUSUBGRP",
+      "id" : "21482148",
       "localizations" : [
         {
           "description" : "Story Time Universe streaming plans",
@@ -97,7 +48,7 @@
           "displayPrice" : "4.99",
           "familyShareable" : false,
           "groupNumber" : 1,
-          "internalID" : "STU00010",
+          "internalID" : "64A1BASEM1",
           "introductoryOffer" : null,
           "localizations" : [
             {
@@ -109,7 +60,7 @@
           "productID" : "com.storytime.universe.sub.base.monthly",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Base Monthly",
-          "subscriptionGroupID" : "STUSUBGRP",
+          "subscriptionGroupID" : "21482148",
           "type" : "RecurringSubscription",
           "winbackOffers" : [
 
@@ -125,7 +76,7 @@
           "displayPrice" : "9.99",
           "familyShareable" : false,
           "groupNumber" : 2,
-          "internalID" : "STU00011",
+          "internalID" : "64A1STDRM1",
           "introductoryOffer" : null,
           "localizations" : [
             {
@@ -137,7 +88,7 @@
           "productID" : "com.storytime.universe.sub.standard.monthly",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Standard Monthly",
-          "subscriptionGroupID" : "STUSUBGRP",
+          "subscriptionGroupID" : "21482148",
           "type" : "RecurringSubscription",
           "winbackOffers" : [
 
@@ -153,7 +104,7 @@
           "displayPrice" : "14.99",
           "familyShareable" : false,
           "groupNumber" : 3,
-          "internalID" : "STU00012",
+          "internalID" : "64A1FMLYM1",
           "introductoryOffer" : null,
           "localizations" : [
             {
@@ -165,7 +116,7 @@
           "productID" : "com.storytime.universe.sub.family.monthly",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Family Monthly",
-          "subscriptionGroupID" : "STUSUBGRP",
+          "subscriptionGroupID" : "21482148",
           "type" : "RecurringSubscription",
           "winbackOffers" : [
 
@@ -181,7 +132,7 @@
           "displayPrice" : "49.99",
           "familyShareable" : false,
           "groupNumber" : 1,
-          "internalID" : "STU00020",
+          "internalID" : "64A1BASEY1",
           "introductoryOffer" : null,
           "localizations" : [
             {
@@ -193,7 +144,7 @@
           "productID" : "com.storytime.universe.sub.base.yearly",
           "recurringSubscriptionPeriod" : "P1Y",
           "referenceName" : "Base Yearly",
-          "subscriptionGroupID" : "STUSUBGRP",
+          "subscriptionGroupID" : "21482148",
           "type" : "RecurringSubscription",
           "winbackOffers" : [
 
@@ -209,7 +160,7 @@
           "displayPrice" : "99.99",
           "familyShareable" : false,
           "groupNumber" : 2,
-          "internalID" : "STU00021",
+          "internalID" : "64A1STDRY1",
           "introductoryOffer" : null,
           "localizations" : [
             {
@@ -221,7 +172,7 @@
           "productID" : "com.storytime.universe.sub.standard.yearly",
           "recurringSubscriptionPeriod" : "P1Y",
           "referenceName" : "Standard Yearly",
-          "subscriptionGroupID" : "STUSUBGRP",
+          "subscriptionGroupID" : "21482148",
           "type" : "RecurringSubscription",
           "winbackOffers" : [
 
@@ -237,7 +188,7 @@
           "displayPrice" : "149.99",
           "familyShareable" : false,
           "groupNumber" : 3,
-          "internalID" : "STU00022",
+          "internalID" : "64A1FMLYY1",
           "introductoryOffer" : null,
           "localizations" : [
             {
@@ -249,7 +200,7 @@
           "productID" : "com.storytime.universe.sub.family.yearly",
           "recurringSubscriptionPeriod" : "P1Y",
           "referenceName" : "Family Yearly",
-          "subscriptionGroupID" : "STUSUBGRP",
+          "subscriptionGroupID" : "21482148",
           "type" : "RecurringSubscription",
           "winbackOffers" : [
 
@@ -259,7 +210,7 @@
     }
   ],
   "version" : {
-    "major" : 4,
+    "major" : 3,
     "minor" : 0
   }
 }

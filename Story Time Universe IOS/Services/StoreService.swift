@@ -42,72 +42,82 @@ final class StoreService: ObservableObject {
         isLoadingProducts = true
         defer { isLoadingProducts = false }
 
-        let requested = StoreProducts.allProductIDs
-        // Prefer Array (same order as StoreProducts) — StoreKit ignores unknown IDs silently.
-        let ids = requested
+        let ids = StoreProducts.allProductIDs
+        var products: [Product] = []
+        var lastErrorMessage: String?
 
-        do {
-            // Brief settle helps first launch after install when App Store is still warming up.
-            var products: [Product] = []
-            var lastErrorMessage: String?
-            for attempt in 0..<3 {
-                if attempt > 0 {
-                    try? await Task.sleep(nanoseconds: UInt64(400_000_000 * attempt))
-                }
+        // Pass 1: bulk request (normal path).
+        for attempt in 0..<3 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(350_000_000 * attempt))
+            }
+            do {
+                products = try await Product.products(for: ids)
+                if !products.isEmpty { break }
+            } catch {
+                lastErrorMessage = error.localizedDescription
+            }
+        }
+
+        // Pass 2: per-id (helps some incomplete ASC catalogs / StoreKit Config edge cases).
+        if products.isEmpty {
+            var byId: [String: Product] = [:]
+            for id in ids {
                 do {
-                    products = try await Product.products(for: ids)
-                    if !products.isEmpty { break }
+                    let found = try await Product.products(for: [id])
+                    for p in found { byId[p.id] = p }
                 } catch {
                     lastErrorMessage = error.localizedDescription
                 }
             }
-
-            subscriptionProducts = products
-                .filter { StoreProducts.isSubscription($0.id) }
-                .sorted { $0.price < $1.price }
-            ppvProduct = products.first { StoreProducts.isPPV($0.id) }
-
-            if products.isEmpty {
-                let idList = ids.joined(separator: "\n• ")
-                let errExtra = lastErrorMessage.map { "\nStoreKit said: \($0)\n" } ?? ""
-                #if DEBUG
-                lastError = """
-                App Store returned 0 of \(ids.count) products.
-                \(errExtra)
-                Looking for:
-                • \(idList)
-
-                DEBUG RUN CHECK:
-                1. Product → Scheme → Edit Scheme → Run → Options
-                2. StoreKit Configuration must say:
-                   Products.storekit
-                   (path: Story Time Universe IOS/Configuration/Products.storekit)
-                3. If it says “None”, open that file from the menu.
-                4. Stop app, Clean Build Folder, Run again from Xcode (not an old install icon).
-
-                TestFlight / App Store builds never use the .storekit file — products must be Ready in App Store Connect for this bundle.
-                """
-                #else
-                lastError = """
-                App Store returned 0 of \(ids.count) products for com.storytime.universe.
-                \(errExtra)
-                Looking for:
-                • \(idList)
-
-                Finish In-App Purchases under Story Time Universe in App Store Connect (price + localization), with Paid Apps Agreement active, then try again in TestFlight with a Sandbox Apple ID.
-                """
-                #endif
-            } else {
-                lastError = nil
-                #if DEBUG
-                print("[StoreService] Loaded \(products.count)/\(ids.count) products: \(products.map(\.id))")
-                #endif
-            }
-        } catch {
-            lastError = error.localizedDescription
-            subscriptionProducts = []
-            ppvProduct = nil
+            products = Array(byId.values)
         }
+
+        subscriptionProducts = products
+            .filter { StoreProducts.isSubscription($0.id) }
+            .sorted { $0.price < $1.price }
+        ppvProduct = products.first { StoreProducts.isPPV($0.id) }
+
+        if products.isEmpty {
+            lastError = Self.emptyCatalogMessage(ids: ids, storeError: lastErrorMessage)
+            #if DEBUG
+            print("[StoreService] EMPTY catalog. ids=\(ids) error=\(lastErrorMessage ?? "none") bundle=\(Bundle.main.bundleIdentifier ?? "?")")
+            #endif
+        } else {
+            lastError = nil
+            #if DEBUG
+            let missing = Set(ids).subtracting(products.map(\.id))
+            print("[StoreService] Loaded \(products.count)/\(ids.count): \(products.map(\.id)) missing=\(missing)")
+            #endif
+        }
+    }
+
+    private static func emptyCatalogMessage(ids: [String], storeError: String?) -> String {
+        let idList = ids.joined(separator: "\n• ")
+        let err = storeError.map { "\nStoreKit error: \($0)\n" } ?? "\n"
+        #if DEBUG
+        return """
+        StoreKit returned 0 of \(ids.count) products.\(err)
+        Bundle: \(Bundle.main.bundleIdentifier ?? "?")
+
+        Looking for:
+        • \(idList)
+
+        IF YOU'RE IN SIMULATOR / XCODE RUN:
+        Scheme “Story Time Universe IOS” → Run → Options → StoreKit Configuration
+        must be “Products.storekit” (not None). Then Clean Build Folder and Run ▶ again.
+
+        IF YOU'RE ON TESTFLIGHT (top status bar says TestFlight):
+        Local .storekit NEVER applies. Products load only from App Store Connect when
+        each IAP has price + localization and Paid Apps Agreement is Active.
+        Status “Prepare for Submission” with missing price often returns 0 products.
+        """
+        #else
+        return """
+        Subscriptions are not available from the App Store yet.\(err)
+        Make sure In-App Purchases for Story Time Universe are complete in App Store Connect, then try again later.
+        """
+        #endif
     }
 
     func refreshEntitlements() async {
@@ -131,7 +141,6 @@ final class StoreService: ObservableObject {
 
     // MARK: - Purchase
 
-    /// Purchase a subscription product and sync entitlement to Story Time account.
     @discardableResult
     func purchaseSubscription(_ product: Product) async throws -> Transaction {
         guard StoreProducts.isSubscription(product.id) else {
@@ -159,7 +168,6 @@ final class StoreService: ObservableObject {
         }
     }
 
-    /// Purchase a one-time PPV unlock for a content id, then notify backend.
     @discardableResult
     func purchasePPVUnlock(contentId: String) async throws -> Transaction {
         guard let product = ppvProduct else {
@@ -177,7 +185,6 @@ final class StoreService: ObservableObject {
         lastError = nil
         defer { purchaseInFlight = false }
 
-        // Tag purchase so App Store Server / backend can match content.
         let result = try await product.purchase(options: [
             .appAccountToken(Self.appAccountToken(for: contentId)),
         ])
@@ -206,7 +213,6 @@ final class StoreService: ObservableObject {
         try await AppStore.sync()
         await refreshEntitlements()
 
-        // Re-activate most recent active subscription entitlement with backend.
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result else { continue }
             guard transaction.revocationDate == nil else { continue }
@@ -233,11 +239,9 @@ final class StoreService: ObservableObject {
                 )
                 await transaction.finish()
             } catch {
-                // Leave unfinished so StoreKit retries activation.
                 lastError = error.localizedDescription
             }
         }
-        // PPV consumables need contentId at purchase time — never finish orphaned updates here.
         await refreshEntitlements()
     }
 
@@ -289,7 +293,6 @@ final class StoreService: ObservableObject {
         )
     }
 
-    /// Prefer JWS from `VerificationResult.jwsRepresentation` (not on `Transaction` itself).
     private static func payloadString(
         jwsRepresentation: String,
         transaction: Transaction
@@ -297,7 +300,6 @@ final class StoreService: ObservableObject {
         if !jwsRepresentation.isEmpty {
             return jwsRepresentation
         }
-        // Fallback payload for backends that accept decoded transaction JSON.
         if let utf8 = String(data: transaction.jsonRepresentation, encoding: .utf8), !utf8.isEmpty {
             return utf8
         }
@@ -313,9 +315,7 @@ final class StoreService: ObservableObject {
         }
     }
 
-    /// Deterministic UUID for appAccountToken (must be UUID format for StoreKit).
     private static func appAccountToken(for contentId: String) -> UUID {
-        // Namespace UUID for Story Time content mapping.
         let namespace = UUID(uuidString: "6BA7B810-9DAD-11D1-80B4-00C04FD430C8")!
         return uuidV5(name: contentId, namespace: namespace)
     }
@@ -323,12 +323,11 @@ final class StoreService: ObservableObject {
     private static func uuidV5(name: String, namespace: UUID) -> UUID {
         var namespaceBytes = withUnsafeBytes(of: namespace.uuid) { Array($0) }
         let nameBytes = Array(name.utf8)
-        // Simple non-crypto mix for stable UUID-shaped token (StoreKit only needs UUID).
         var digest = [UInt8](repeating: 0, count: 16)
         for (i, b) in (namespaceBytes + nameBytes).enumerated() {
             digest[i % 16] ^= b &+ UInt8(i & 0xFF)
         }
-        digest[6] = (digest[6] & 0x0F) | 0x50 // version 5-ish
+        digest[6] = (digest[6] & 0x0F) | 0x50
         digest[8] = (digest[8] & 0x3F) | 0x80
         return UUID(uuid: (
             digest[0], digest[1], digest[2], digest[3],
