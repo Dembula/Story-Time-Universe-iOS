@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import StoreKit
 
@@ -41,7 +42,7 @@ final class StoreService: ObservableObject {
         isLoadingProducts = true
         defer { isLoadingProducts = false }
         do {
-            let products = try await Product.products(for: StoreProducts.allProductIDs)
+            let products = try await Product.products(for: Set(StoreProducts.allProductIDs))
             subscriptionProducts = products
                 .filter { StoreProducts.isSubscription($0.id) }
                 .sorted { $0.price < $1.price }
@@ -91,7 +92,8 @@ final class StoreService: ObservableObject {
         switch result {
         case .success(let verification):
             let transaction = try checkVerified(verification)
-            try await activateSubscriptionOnServer(transaction)
+            let jws = verification.jwsRepresentation
+            try await activateSubscriptionOnServer(transaction, signedTransactionInfo: jws)
             await transaction.finish()
             await refreshEntitlements()
             return transaction
@@ -129,7 +131,8 @@ final class StoreService: ObservableObject {
         switch result {
         case .success(let verification):
             let transaction = try checkVerified(verification)
-            try await activatePPVOnServer(transaction, contentId: contentId)
+            let jws = verification.jwsRepresentation
+            try await activatePPVOnServer(transaction, contentId: contentId, signedTransactionInfo: jws)
             await transaction.finish()
             await refreshEntitlements()
             return transaction
@@ -155,7 +158,10 @@ final class StoreService: ObservableObject {
             guard case .verified(let transaction) = result else { continue }
             guard transaction.revocationDate == nil else { continue }
             if StoreProducts.isSubscription(transaction.productID) {
-                try await activateSubscriptionOnServer(transaction)
+                try await activateSubscriptionOnServer(
+                    transaction,
+                    signedTransactionInfo: result.jwsRepresentation
+                )
                 return
             }
         }
@@ -168,7 +174,10 @@ final class StoreService: ObservableObject {
         guard case .verified(let transaction) = result else { return }
         if StoreProducts.isSubscription(transaction.productID) {
             do {
-                try await activateSubscriptionOnServer(transaction)
+                try await activateSubscriptionOnServer(
+                    transaction,
+                    signedTransactionInfo: result.jwsRepresentation
+                )
                 await transaction.finish()
             } catch {
                 // Leave unfinished so StoreKit retries activation.
@@ -190,8 +199,14 @@ final class StoreService: ObservableObject {
 
     // MARK: - Backend activate
 
-    private func activateSubscriptionOnServer(_ transaction: Transaction) async throws {
-        let payload = Self.payloadString(from: transaction)
+    private func activateSubscriptionOnServer(
+        _ transaction: Transaction,
+        signedTransactionInfo: String
+    ) async throws {
+        let payload = Self.payloadString(
+            jwsRepresentation: signedTransactionInfo,
+            transaction: transaction
+        )
         try await ViewerAPI.shared.activateAppleSubscription(
             productId: transaction.productID,
             transactionId: String(transaction.id),
@@ -202,8 +217,15 @@ final class StoreService: ObservableObject {
         )
     }
 
-    private func activatePPVOnServer(_ transaction: Transaction, contentId: String) async throws {
-        let payload = Self.payloadString(from: transaction)
+    private func activatePPVOnServer(
+        _ transaction: Transaction,
+        contentId: String,
+        signedTransactionInfo: String
+    ) async throws {
+        let payload = Self.payloadString(
+            jwsRepresentation: signedTransactionInfo,
+            transaction: transaction
+        )
         try await ViewerAPI.shared.activateApplePPV(
             contentId: contentId,
             productId: transaction.productID,
@@ -214,10 +236,15 @@ final class StoreService: ObservableObject {
         )
     }
 
-    private static func payloadString(from transaction: Transaction) -> String {
-        // Prefer Apple's JWS string for App Store Server API verification.
-        let jws = transaction.jwsRepresentation
-        if !jws.isEmpty { return jws }
+    /// Prefer JWS from `VerificationResult.jwsRepresentation` (not on `Transaction` itself).
+    private static func payloadString(
+        jwsRepresentation: String,
+        transaction: Transaction
+    ) -> String {
+        if !jwsRepresentation.isEmpty {
+            return jwsRepresentation
+        }
+        // Fallback payload for backends that accept decoded transaction JSON.
         if let utf8 = String(data: transaction.jsonRepresentation, encoding: .utf8), !utf8.isEmpty {
             return utf8
         }
