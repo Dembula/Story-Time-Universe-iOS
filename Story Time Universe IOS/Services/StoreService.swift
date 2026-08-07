@@ -69,25 +69,34 @@ final class StoreService: ObservableObject {
 
             if products.isEmpty {
                 let idList = ids.joined(separator: "\n• ")
-                if let lastErrorMessage, !lastErrorMessage.isEmpty {
-                    lastError = """
-                    Could not load App Store prices: \(lastErrorMessage)
+                let errExtra = lastErrorMessage.map { "\nStoreKit said: \($0)\n" } ?? ""
+                #if DEBUG
+                lastError = """
+                App Store returned 0 of \(ids.count) products.
+                \(errExtra)
+                Looking for:
+                • \(idList)
 
-                    Expected \(ids.count) products for bundle com.storytime.universe:
-                    • \(idList)
+                DEBUG RUN CHECK:
+                1. Product → Scheme → Edit Scheme → Run → Options
+                2. StoreKit Configuration must say:
+                   Products.storekit
+                   (path: Story Time Universe IOS/Configuration/Products.storekit)
+                3. If it says “None”, open that file from the menu.
+                4. Stop app, Clean Build Folder, Run again from Xcode (not an old install icon).
 
-                    Fix: add these under THIS app in App Store Connect (not Creator), complete price + localization, Paid Apps Agreement Active. For Xcode: Scheme → Run → Options → StoreKit Configuration → Products.storekit
-                    """
-                } else {
-                    lastError = """
-                    App Store returned 0 of \(ids.count) products for com.storytime.universe.
+                TestFlight / App Store builds never use the .storekit file — products must be Ready in App Store Connect for this bundle.
+                """
+                #else
+                lastError = """
+                App Store returned 0 of \(ids.count) products for com.storytime.universe.
+                \(errExtra)
+                Looking for:
+                • \(idList)
 
-                    Looking for:
-                    • \(idList)
-
-                    This is not a code crash — StoreKit only returns products registered for this app’s bundle ID. Creator app products never appear here. In Xcode attach Configuration/Products.storekit to the Run scheme to test without ASC, or finish IAPs under Story Time Universe in App Store Connect.
-                    """
-                }
+                Finish In-App Purchases under Story Time Universe in App Store Connect (price + localization), with Paid Apps Agreement active, then try again in TestFlight with a Sandbox Apple ID.
+                """
+                #endif
             } else {
                 lastError = nil
                 #if DEBUG

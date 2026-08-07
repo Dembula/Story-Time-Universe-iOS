@@ -28,6 +28,9 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "YES">
+      <StoreKitConfigurationFileReference
+         identifier = "../../../Story Time Universe IOS/Configuration/Products.storekit">
+      </StoreKitConfigurationFileReference>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -49,9 +52,13 @@
             ReferencedContainer = "container:Story Time Universe IOS.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
-      <!-- Local StoreKit catalog so plans load without waiting on ASC review. -->
+      <!--
+        Path is relative to THIS .xcscheme file:
+        xcschemes/ -> xcshareddata/ -> .xcodeproj/ -> repo root -> Story Time Universe IOS/Configuration/
+        Wrong path = StoreKit silently falls back to App Store and returns 0 products.
+      -->
       <StoreKitConfigurationFileReference
-         identifier = "../Configuration/Products.storekit">
+         identifier = "../../../Story Time Universe IOS/Configuration/Products.storekit">
       </StoreKitConfigurationFileReference>
    </LaunchAction>
    <ProfileAction
