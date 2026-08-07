@@ -139,9 +139,10 @@ struct SubscriptionPaywallView: View {
         } else if displayProducts.isEmpty {
             VStack(spacing: 12) {
                 Text(store.lastError ?? "Plans are temporarily unavailable.")
-                    .font(.footnote)
+                    .font(.caption)
                     .foregroundStyle(.red.opacity(0.9))
-                    .multilineTextAlignment(.center)
+                    .multilineTextAlignment(.leading)
+                    .textSelection(.enabled)
                 Button("Try again") {
                     Task { await store.refreshProducts() }
                 }

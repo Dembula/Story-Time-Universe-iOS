@@ -41,15 +41,59 @@ final class StoreService: ObservableObject {
     func refreshProducts() async {
         isLoadingProducts = true
         defer { isLoadingProducts = false }
+
+        let requested = StoreProducts.allProductIDs
+        // Prefer Array (same order as StoreProducts) — StoreKit ignores unknown IDs silently.
+        let ids = requested
+
         do {
-            let products = try await Product.products(for: Set(StoreProducts.allProductIDs))
+            // Brief settle helps first launch after install when App Store is still warming up.
+            var products: [Product] = []
+            var lastErrorMessage: String?
+            for attempt in 0..<3 {
+                if attempt > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(400_000_000 * attempt))
+                }
+                do {
+                    products = try await Product.products(for: ids)
+                    if !products.isEmpty { break }
+                } catch {
+                    lastErrorMessage = error.localizedDescription
+                }
+            }
+
             subscriptionProducts = products
                 .filter { StoreProducts.isSubscription($0.id) }
                 .sorted { $0.price < $1.price }
             ppvProduct = products.first { StoreProducts.isPPV($0.id) }
-            lastError = products.isEmpty
-                ? "Subscription products are not available yet. Configure them in App Store Connect."
-                : nil
+
+            if products.isEmpty {
+                let idList = ids.joined(separator: "\n• ")
+                if let lastErrorMessage, !lastErrorMessage.isEmpty {
+                    lastError = """
+                    Could not load App Store prices: \(lastErrorMessage)
+
+                    Expected \(ids.count) products for bundle com.storytime.universe:
+                    • \(idList)
+
+                    Fix: add these under THIS app in App Store Connect (not Creator), complete price + localization, Paid Apps Agreement Active. For Xcode: Scheme → Run → Options → StoreKit Configuration → Products.storekit
+                    """
+                } else {
+                    lastError = """
+                    App Store returned 0 of \(ids.count) products for com.storytime.universe.
+
+                    Looking for:
+                    • \(idList)
+
+                    This is not a code crash — StoreKit only returns products registered for this app’s bundle ID. Creator app products never appear here. In Xcode attach Configuration/Products.storekit to the Run scheme to test without ASC, or finish IAPs under Story Time Universe in App Store Connect.
+                    """
+                }
+            } else {
+                lastError = nil
+                #if DEBUG
+                print("[StoreService] Loaded \(products.count)/\(ids.count) products: \(products.map(\.id))")
+                #endif
+            }
         } catch {
             lastError = error.localizedDescription
             subscriptionProducts = []
