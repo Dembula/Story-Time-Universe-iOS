@@ -18,6 +18,7 @@ struct SearchView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                searchHeader
                 searchBar
 
                 if isSearching {
@@ -37,19 +38,7 @@ struct SearchView: View {
                 }
             }
             .background(Theme.background.ignoresSafeArea())
-            .navigationTitle("Search")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showAISearch = true
-                    } label: {
-                        Image(systemName: "sparkles")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(Theme.accent)
-                    }
-                    .accessibilityLabel("AI Search")
-                }
-            }
+            .navigationBarHidden(true)
             .navigationDestination(item: $selected) { item in
                 ContentDetailView(contentId: item.id, seed: item)
             }
@@ -64,6 +53,48 @@ struct SearchView: View {
             }
             .task { await loadRecommended() }
         }
+    }
+
+    private var searchHeader: some View {
+        HStack(alignment: .center) {
+            Text("Search")
+                .font(.largeTitle.bold())
+                .foregroundStyle(Theme.foreground)
+
+            Spacer(minLength: 12)
+
+            Button {
+                showAISearch = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.subheadline.weight(.bold))
+                    Text("AI")
+                        .font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(
+                    LinearGradient(
+                        colors: [
+                            Theme.accent,
+                            Color(red: 1.0, green: 0.35, blue: 0.45),
+                            Theme.accentGold,
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .clipShape(Capsule())
+                .shadow(color: Theme.accent.opacity(0.45), radius: 10, y: 3)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("AI Search")
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
     }
 
     private var searchBar: some View {
@@ -87,7 +118,8 @@ struct SearchView: View {
         .padding(14)
         .background(Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 14))
-        .padding()
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 
     @ViewBuilder
@@ -125,6 +157,7 @@ struct SearchView: View {
                 .padding(.bottom, 28)
                 .trackScrollForTabBar()
             }
+            .tabScrollCoordinateSpace()
         }
     }
 
@@ -187,6 +220,7 @@ struct SearchView: View {
                 .padding(.bottom, 28)
                 .trackScrollForTabBar()
             }
+            .tabScrollCoordinateSpace()
         }
     }
 

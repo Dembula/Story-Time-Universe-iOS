@@ -189,6 +189,7 @@ struct HomeView: View {
                     .trackScrollForTabBar()
                 }
                 .ignoresSafeArea(edges: .top)
+                .tabScrollCoordinateSpace()
 
                 homeChrome
 

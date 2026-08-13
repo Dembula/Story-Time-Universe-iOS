@@ -49,6 +49,7 @@ struct CatalogueListView: View {
             .padding(.bottom, 40)
             .trackScrollForTabBar()
         }
+        .tabScrollCoordinateSpace()
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle(request.title)
         .navigationBarTitleDisplayMode(.inline)

@@ -43,7 +43,7 @@ struct DownloadsView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .trackScrollForTabBar()
+                    .trackListScrollForTabBar()
                 }
             }
             .background(Theme.background.ignoresSafeArea())

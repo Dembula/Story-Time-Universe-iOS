@@ -35,6 +35,7 @@ struct MyListView: View {
                         .padding()
                         .trackScrollForTabBar()
                     }
+                    .tabScrollCoordinateSpace()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -119,6 +119,7 @@ struct AccountView: View {
                 .padding(.bottom, 40)
                 .trackScrollForTabBar()
             }
+            .tabScrollCoordinateSpace()
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Account")
             .toolbarColorScheme(.dark, for: .navigationBar)

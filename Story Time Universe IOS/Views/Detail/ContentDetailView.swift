@@ -99,8 +99,12 @@ struct ContentDetailView: View {
             }
             .trackScrollForTabBar()
         }
+        .tabScrollCoordinateSpace()
+        .ignoresSafeArea(edges: .top)
         .background(Theme.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .task { await load() }
         .navigationDestination(item: $selectedRelated) { item in
             ContentDetailView(contentId: item.id, seed: item)
@@ -363,22 +367,24 @@ private struct DetailHeroView: View {
     let onWatchlist: () -> Void
     let onDownloadBlocked: () -> Void
 
-    private let heroHeight: CGFloat = min(UIScreen.main.bounds.height * 0.58, 520)
+    private let heroHeight: CGFloat = min(UIScreen.main.bounds.height * 0.62, 560)
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            RemoteImage(urls: imageURLs)
-                .frame(width: UIScreen.main.bounds.width, height: heroHeight)
-                .clipped()
+            GeometryReader { geo in
+                RemoteImage(urls: imageURLs)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+            }
 
             LinearGradient(
-                colors: [.black.opacity(0.4), .clear, .clear],
+                colors: [.black.opacity(0.55), .clear, .clear],
                 startPoint: .top,
                 endPoint: .center
             )
 
             LinearGradient(
-                colors: [.clear, .black.opacity(0.45), .black.opacity(0.97)],
+                colors: [.clear, .black.opacity(0.35), .black.opacity(0.96)],
                 startPoint: .center,
                 endPoint: .bottom
             )
@@ -399,22 +405,13 @@ private struct DetailHeroView: View {
 
                 ratingRow
                 actionRow
-
-                if showStartFromBeginning {
-                    Button(action: onStartFromBeginning) {
-                        Text("Start from Beginning")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.92))
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.plain)
-                }
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(width: UIScreen.main.bounds.width, height: heroHeight)
+        .frame(maxWidth: .infinity)
+        .frame(height: heroHeight)
         .clipped()
     }
 
@@ -435,12 +432,12 @@ private struct DetailHeroView: View {
     }
 
     private var actionRow: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Button(action: onPlay) {
                 Label(playLabel, systemImage: "play.fill")
                     .font(.headline)
                     .foregroundStyle(.black)
-                    .padding(.horizontal, 28)
+                    .padding(.horizontal, 26)
                     .padding(.vertical, 14)
                     .background(Color.white)
                     .clipShape(Capsule())
@@ -464,6 +461,14 @@ private struct DetailHeroView: View {
 
             if let downloadSpec {
                 circularDownload(spec: downloadSpec)
+            }
+
+            if showStartFromBeginning {
+                circularAction(
+                    systemImage: "arrow.counterclockwise",
+                    label: "Start from beginning",
+                    action: onStartFromBeginning
+                )
             }
 
             Spacer(minLength: 0)
