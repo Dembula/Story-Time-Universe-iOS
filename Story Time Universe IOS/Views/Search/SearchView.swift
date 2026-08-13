@@ -66,28 +66,17 @@ struct SearchView: View {
             Button {
                 showAISearch = true
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Image(systemName: "sparkles")
-                        .font(.subheadline.weight(.bold))
+                        .font(.subheadline.weight(.semibold))
                     Text("AI")
-                        .font(.subheadline.weight(.bold))
+                        .font(.subheadline.weight(.semibold))
                 }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(
-                    LinearGradient(
-                        colors: [
-                            Theme.accent,
-                            Color(red: 1.0, green: 0.35, blue: 0.45),
-                            Theme.accentGold,
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .foregroundStyle(Theme.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Theme.accent.opacity(0.14))
                 .clipShape(Capsule())
-                .shadow(color: Theme.accent.opacity(0.45), radius: 10, y: 3)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("AI Search")

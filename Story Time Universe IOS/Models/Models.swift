@@ -447,6 +447,20 @@ struct SearchResult: Codable, Identifiable, Hashable {
     }
 }
 
+extension ContentItem {
+    var asSearchResult: SearchResult {
+        SearchResult(
+            id: id,
+            title: title,
+            type: type,
+            category: category,
+            year: year,
+            posterUrl: posterUrl,
+            creatorName: nil
+        )
+    }
+}
+
 struct AISearchPayload: Codable {
     let results: [SearchResult]?
     let items: [SearchResult]?

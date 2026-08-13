@@ -78,7 +78,8 @@ final class AppState: ObservableObject {
         activeProfile = nil
 
         let splashStarted = ContinuousClock.now
-        let minimumSplash: Duration = .milliseconds(2800)
+        // Long enough for the splash choreography to finish before dissolving out.
+        let minimumSplash: Duration = .milliseconds(2600)
 
         // Offline-first: wait for real path status, then jump to downloads if needed.
         await network.waitForInitialPath()

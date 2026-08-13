@@ -1,268 +1,227 @@
 import SwiftUI
 
+/// Cinematic launch splash — matches the black system launch screen, then dissolves into the app.
 struct LaunchSplashView: View {
-    @State private var logoVisible = false
-    @State private var titleVisible = false
-    @State private var universeVisible = false
-    @State private var loaderVisible = false
-    @State private var progress: CGFloat = 0
-    @State private var logoGlow = false
-    @State private var ribbonDrift = false
-    @State private var loadingPulse = false
+    @State private var stage: Stage = .idle
+    @State private var glowPulse = false
+    @State private var progress: CGFloat = 0.08
+
+    private enum Stage: Int, Comparable {
+        case idle = 0
+        case logo = 1
+        case wordmark = 2
+        case loader = 3
+
+        static func < (lhs: Stage, rhs: Stage) -> Bool { lhs.rawValue < rhs.rawValue }
+    }
 
     var body: some View {
-        // Solid full-bleed black first — avoids Creators-style edge gaps from
-        // undersized splash images / GeometryReader clipping.
         ZStack {
-            Color.black
-                .ignoresSafeArea(.all)
+            Color.black.ignoresSafeArea()
 
-            atmosphere
+            ambientLight
                 .allowsHitTesting(false)
 
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
 
-                brandBlock
-                    .padding(.horizontal, 32)
+                brandCluster
 
                 Spacer(minLength: 0)
 
-                loaderBlock
-                    .padding(.horizontal, 48)
-                    .padding(.bottom, 56)
+                footer
+                    .padding(.bottom, 52)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .safeAreaPadding(.bottom, 8)
+            .padding(.horizontal, 36)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black)
-        .ignoresSafeArea(.all)
-        .onAppear { startSequence() }
+        .ignoresSafeArea()
+        .preferredColorScheme(.dark)
+        .onAppear { runEntrance() }
     }
 
     // MARK: - Brand
 
-    private var brandBlock: some View {
-        VStack(spacing: 0) {
+    private var brandCluster: some View {
+        VStack(spacing: 22) {
             ZStack {
+                // Soft brand halo — restrained, not neon.
                 Circle()
                     .fill(
                         RadialGradient(
                             colors: [
-                                Theme.accent.opacity(logoGlow ? 0.45 : 0.22),
-                                Theme.accentGold.opacity(logoGlow ? 0.18 : 0.08),
+                                Theme.accent.opacity(glowPulse ? 0.28 : 0.14),
+                                Theme.accent.opacity(0.06),
                                 .clear,
                             ],
                             center: .center,
-                            startRadius: 10,
-                            endRadius: 130
+                            startRadius: 20,
+                            endRadius: 120
                         )
                     )
-                    .frame(width: 260, height: 260)
-                    .blur(radius: 18)
-                    .scaleEffect(logoGlow ? 1.08 : 0.92)
+                    .frame(width: 240, height: 240)
+                    .blur(radius: 8)
+                    .scaleEffect(glowPulse ? 1.05 : 0.96)
+
+                // Thin orbit ring while loading.
+                if stage >= .loader {
+                    TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
+                        let seconds = timeline.date.timeIntervalSinceReferenceDate
+                        let angle = (seconds * 130).truncatingRemainder(dividingBy: 360)
+                        Circle()
+                            .trim(from: 0.12, to: 0.38)
+                            .stroke(
+                                AngularGradient(
+                                    colors: [
+                                        Theme.accent.opacity(0.05),
+                                        Theme.accent.opacity(0.9),
+                                        Theme.accentGold.opacity(0.75),
+                                        Theme.accent.opacity(0.05),
+                                    ],
+                                    center: .center
+                                ),
+                                style: StrokeStyle(lineWidth: 1.75, lineCap: .round)
+                            )
+                            .frame(width: 168, height: 168)
+                            .rotationEffect(.degrees(angle))
+                    }
+                    .transition(.opacity)
+                }
 
                 Image("AppLogo")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 188, height: 188)
-                    .shadow(color: Theme.accent.opacity(logoGlow ? 0.65 : 0.35), radius: logoGlow ? 32 : 16, y: 4)
-                    .scaleEffect(logoVisible ? 1 : 0.78)
-                    .opacity(logoVisible ? 1 : 0)
+                    .frame(width: 112, height: 112)
+                    .shadow(color: Theme.accent.opacity(stage >= .logo ? 0.35 : 0), radius: 24, y: 8)
+                    .scaleEffect(stage >= .logo ? 1 : 0.86)
+                    .opacity(stage >= .logo ? 1 : 0)
             }
-            .padding(.bottom, 10)
+            .frame(height: 200)
 
-            Text("STORY TIME")
-                .font(.system(size: 20, weight: .semibold, design: .default))
-                .tracking(7)
-                .foregroundStyle(Color.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .fixedSize(horizontal: true, vertical: false)
-                .opacity(titleVisible ? 1 : 0)
-                .offset(y: titleVisible ? 0 : 10)
-
-            HStack(spacing: 12) {
-                Capsule()
-                    .fill(Theme.accent.opacity(0.85))
-                    .frame(height: 1.5)
-                    .frame(maxWidth: .infinity)
+            VStack(spacing: 10) {
+                Text("STORY TIME")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .tracking(6)
+                    .foregroundStyle(Color.white.opacity(0.95))
 
                 Text("UNIVERSE")
-                    .font(.system(size: 12, weight: .bold, design: .default))
-                    .tracking(4)
-                    .foregroundStyle(Theme.accent)
-                    .lineLimit(1)
-                    .minimumScaleFactor(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .layoutPriority(1)
-
-                Capsule()
-                    .fill(Theme.accent.opacity(0.85))
-                    .frame(height: 1.5)
-                    .frame(maxWidth: .infinity)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .tracking(5)
+                    .foregroundStyle(Theme.accent.opacity(0.95))
             }
-            .frame(maxWidth: 280)
-            .padding(.top, 14)
-            .opacity(universeVisible ? 1 : 0)
-            .offset(y: universeVisible ? 0 : 8)
+            .opacity(stage >= .wordmark ? 1 : 0)
+            .offset(y: stage >= .wordmark ? 0 : 12)
         }
-        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Story Time Universe")
     }
 
-    // MARK: - Loader (single label — no stacked duplicate text)
+    // MARK: - Footer loader
 
-    private var loaderBlock: some View {
-        VStack(spacing: 18) {
-            GeometryReader { bar in
-                let width = bar.size.width
+    private var footer: some View {
+        VStack(spacing: 14) {
+            GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(Color.white.opacity(0.08))
-                        .frame(height: 2.5)
+                        .frame(height: 2)
 
                     Capsule()
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    Theme.accent.opacity(0.55),
+                                    Theme.accent.opacity(0.4),
                                     Theme.accent,
-                                    Theme.accentGold,
+                                    Theme.accentGold.opacity(0.9),
                                 ],
                                 startPoint: .leading,
                                 endPoint: .trailing
                             )
                         )
-                        .frame(width: max(width * progress, progress > 0 ? 8 : 0), height: 2.5)
-                        .shadow(color: Theme.accent.opacity(0.8), radius: 6, y: 0)
-
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 7, height: 7)
-                        .shadow(color: Theme.accentGold, radius: 10)
-                        .shadow(color: Theme.accent, radius: 16)
-                        .offset(x: max(width * progress - 3.5, 0))
-                        .opacity(progress > 0.02 ? 1 : 0)
+                        .frame(width: max(geo.size.width * progress, 6), height: 2)
                 }
                 .frame(maxHeight: .infinity, alignment: .center)
             }
-            .frame(height: 14)
+            .frame(width: 120, height: 10)
 
-            // One Text only — Creators showed a duplicated footer from stacked labels.
-            Text("LOADING YOUR UNIVERSE...")
-                .font(.system(size: 11, weight: .medium, design: .default))
-                .tracking(3.5)
-                .foregroundStyle(Color.white)
-                .opacity(loaderVisible ? (loadingPulse ? 1 : 0.55) : 0)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
+            Text("Preparing your library")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.45))
+                .tracking(0.4)
         }
-        .opacity(loaderVisible ? 1 : 0)
-        .offset(y: loaderVisible ? 0 : 12)
-        .frame(maxWidth: .infinity)
+        .opacity(stage >= .loader ? 1 : 0)
+        .offset(y: stage >= .loader ? 0 : 10)
+        .accessibilityLabel("Loading")
     }
 
     // MARK: - Atmosphere
 
-    private var atmosphere: some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            let h = geo.size.height
+    private var ambientLight: some View {
+        ZStack {
+            // Top vignette wash — cinematic, not busy.
+            RadialGradient(
+                colors: [
+                    Theme.accent.opacity(0.16),
+                    Theme.accent.opacity(0.04),
+                    .clear,
+                ],
+                center: .top,
+                startRadius: 40,
+                endRadius: 420
+            )
+            .opacity(stage >= .logo ? 1 : 0)
 
-            ZStack {
-                Ellipse()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Theme.accent.opacity(0.28),
-                                Theme.accent.opacity(0.06),
-                                .clear,
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: w * 1.35, height: h * 0.42)
-                    .rotationEffect(.degrees(-28))
-                    .offset(
-                        x: ribbonDrift ? -w * 0.28 : -w * 0.36,
-                        y: ribbonDrift ? -h * 0.28 : -h * 0.32
-                    )
-                    .blur(radius: 36)
+            RadialGradient(
+                colors: [
+                    Color.white.opacity(0.04),
+                    .clear,
+                ],
+                center: UnitPoint(x: 0.5, y: 0.42),
+                startRadius: 10,
+                endRadius: 220
+            )
+            .opacity(stage >= .logo ? 1 : 0)
 
-                Ellipse()
-                    .fill(Theme.accentGold.opacity(0.12))
-                    .frame(width: w * 0.7, height: h * 0.22)
-                    .rotationEffect(.degrees(-18))
-                    .offset(
-                        x: ribbonDrift ? -w * 0.1 : -w * 0.18,
-                        y: -h * 0.22
-                    )
-                    .blur(radius: 50)
-
-                Ellipse()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Theme.accent.opacity(0.22),
-                                Theme.accent.opacity(0.05),
-                                .clear,
-                            ],
-                            startPoint: .bottomLeading,
-                            endPoint: .topTrailing
-                        )
-                    )
-                    .frame(width: w * 1.4, height: h * 0.38)
-                    .rotationEffect(.degrees(22))
-                    .offset(
-                        x: ribbonDrift ? -w * 0.32 : -w * 0.4,
-                        y: ribbonDrift ? h * 0.38 : h * 0.42
-                    )
-                    .blur(radius: 40)
-            }
-            .frame(width: w, height: h)
-            // Bleed past edges then clip so blur never reveals a light seam.
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black)
-            .clipped()
+            // Bottom fade into pure black — matches next screens.
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.55), .black],
+                startPoint: .center,
+                endPoint: .bottom
+            )
         }
-        .ignoresSafeArea(.all)
+        .ignoresSafeArea()
     }
 
-    // MARK: - Sequence
+    // MARK: - Choreography
 
-    private func startSequence() {
-        withAnimation(.easeInOut(duration: 6).repeatForever(autoreverses: true)) {
-            ribbonDrift = true
-        }
+    private func runEntrance() {
+        // Keep the first frames pure black so the system launch → splash handoff is invisible.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 80_000_000)
 
-        withAnimation(.spring(response: 0.85, dampingFraction: 0.78)) {
-            logoVisible = true
-        }
+            withAnimation(.spring(response: 0.72, dampingFraction: 0.82)) {
+                stage = .logo
+            }
 
-        withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true).delay(0.35)) {
-            logoGlow = true
-        }
+            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
+                glowPulse = true
+            }
 
-        withAnimation(.easeOut(duration: 0.55).delay(0.28)) {
-            titleVisible = true
-        }
+            try? await Task.sleep(nanoseconds: 280_000_000)
 
-        withAnimation(.easeOut(duration: 0.55).delay(0.48)) {
-            universeVisible = true
-        }
+            withAnimation(.easeOut(duration: 0.55)) {
+                stage = .wordmark
+            }
 
-        withAnimation(.easeOut(duration: 0.5).delay(0.7)) {
-            loaderVisible = true
-        }
+            try? await Task.sleep(nanoseconds: 220_000_000)
 
-        withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true).delay(0.85)) {
-            loadingPulse = true
-        }
+            withAnimation(.easeOut(duration: 0.45)) {
+                stage = .loader
+            }
 
-        withAnimation(.easeInOut(duration: 2.35).delay(0.85)) {
-            progress = 1
+            // Progress eases toward completion over the minimum splash window.
+            withAnimation(.easeInOut(duration: 2.35)) {
+                progress = 0.92
+            }
         }
     }
 }

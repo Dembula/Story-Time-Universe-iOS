@@ -5,30 +5,49 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
-            Theme.background.ignoresSafeArea()
+            Color.black.ignoresSafeArea()
 
             switch appState.route {
             case .loading:
                 LaunchSplashView()
-                    .transition(.opacity)
+                    .transition(splashExit)
+                    .zIndex(2)
             case .signIn:
                 SignInView()
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(contentEnter)
             case .profiles:
                 ProfilesView()
-                    .transition(.opacity)
+                    .transition(contentEnter)
             case .main:
                 MainTabView()
-                    .transition(.opacity)
+                    .transition(contentEnter)
             case .offlineDownloads:
                 OfflineDownloadsGate()
-                    .transition(.opacity)
+                    .transition(contentEnter)
             }
         }
-        .animation(.easeInOut(duration: 0.45), value: appState.route)
+        .animation(.easeInOut(duration: 0.55), value: appState.route)
         .task {
             await appState.bootstrap()
         }
+    }
+
+    /// Splash dissolves up and out — feels like the brand lifts into the app.
+    private var splashExit: AnyTransition {
+        .asymmetric(
+            insertion: .opacity,
+            removal: .opacity
+                .combined(with: .scale(scale: 1.04, anchor: .center))
+                .combined(with: .offset(y: -12))
+        )
+    }
+
+    /// Destination screens rise softly from the same black bed.
+    private var contentEnter: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: 10)),
+            removal: .opacity
+        )
     }
 }
 

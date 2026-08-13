@@ -7,6 +7,10 @@ struct HeroCarousel: View {
     var onPlay: (ContentItem) -> Void
     var onOpen: (ContentItem) -> Void
 
+    /// Bumped on user swipe so auto-cycle restarts with a fresh pause.
+    @State private var interactionEpoch = 0
+    @State private var advancingProgrammatically = false
+
     private var heroHeight: CGFloat {
         fullBleed
             ? min(UIScreen.main.bounds.height * 0.62, 560)
@@ -34,6 +38,14 @@ struct HeroCarousel: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .frame(width: width, height: height)
+                .onChange(of: index) { _, _ in
+                    if advancingProgrammatically {
+                        advancingProgrammatically = false
+                        return
+                    }
+                    // User swiped — cancel the running cycle and wait 5s before resuming.
+                    interactionEpoch += 1
+                }
 
                 if items.count > 1 {
                     HStack(spacing: 6) {
@@ -55,19 +67,26 @@ struct HeroCarousel: View {
             .padding(.horizontal, fullBleed ? 0 : 12)
         }
         .frame(height: heroHeight + (fullBleed ? 0 : 24))
-        .task(id: items.count) {
+        .task(id: "\(items.count)-\(interactionEpoch)") {
             await autoCycle()
         }
     }
 
     private func autoCycle() async {
         guard items.count > 1 else { return }
+        // After load or user swipe: wait 5s before the next automatic flip.
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        guard !Task.isCancelled else { return }
+
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 5_500_000_000)
-            guard !Task.isCancelled, items.count > 1 else { return }
-            withAnimation(.easeInOut(duration: 0.45)) {
-                index = (index + 1) % items.count
+            guard items.count > 1 else { return }
+            await MainActor.run {
+                advancingProgrammatically = true
+                withAnimation(.easeInOut(duration: 0.45)) {
+                    index = (index + 1) % items.count
+                }
             }
+            try? await Task.sleep(nanoseconds: 5_500_000_000)
         }
     }
 }

@@ -1,16 +1,26 @@
 import SwiftUI
 
 /// Netflix-style full-screen category / genre picker.
+/// Only lists media types and genres that currently have catalogue titles.
 struct HomeCategoryPickerOverlay: View {
     let filter: HomeBrowseFilter
-    let discoveredGenres: [String]
+    /// Type option ids that already have at least one title (plus always "ALL").
+    let populatedTypeIds: Set<String>
+    /// Genre labels discovered from loaded catalogue content.
+    let populatedGenres: [String]
     var onSelect: (HomeBrowseFilter) -> Void
     var onClose: () -> Void
+
+    private var typeOptions: [(id: String, title: String, typeValues: [String])] {
+        CatalogueTypes.browseTypeOptions.filter { option in
+            option.id == "ALL" || populatedTypeIds.contains(option.id)
+        }
+    }
 
     private var genres: [String] {
         var seen = Set<String>()
         var list: [String] = []
-        for g in CatalogueTypes.seedGenres + discoveredGenres {
+        for g in populatedGenres {
             let key = g.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !key.isEmpty, seen.insert(key.lowercased()).inserted else { continue }
             list.append(key)
@@ -28,7 +38,7 @@ struct HomeCategoryPickerOverlay: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 18) {
-                        ForEach(CatalogueTypes.browseTypeOptions, id: \.id) { option in
+                        ForEach(typeOptions, id: \.id) { option in
                             categoryButton(
                                 title: option.id == "ALL" ? "Home" : option.title,
                                 selected: isTypeSelected(option.id)
@@ -45,21 +55,25 @@ struct HomeCategoryPickerOverlay: View {
                             }
                         }
 
-                        Text("GENRES")
-                            .font(.caption.weight(.bold))
-                            .tracking(1.4)
-                            .foregroundStyle(Theme.muted)
-                            .padding(.top, 18)
+                        if !genres.isEmpty {
+                            Text("GENRES")
+                                .font(.caption.weight(.bold))
+                                .tracking(1.4)
+                                .foregroundStyle(Theme.muted)
+                                .padding(.top, 18)
 
-                        ForEach(genres, id: \.self) { genre in
-                            categoryButton(
-                                title: genre,
-                                selected: {
-                                    if case .genre(let g) = filter { return g.caseInsensitiveCompare(genre) == .orderedSame }
-                                    return false
-                                }()
-                            ) {
-                                onSelect(.genre(genre))
+                            ForEach(genres, id: \.self) { genre in
+                                categoryButton(
+                                    title: genre,
+                                    selected: {
+                                        if case .genre(let g) = filter {
+                                            return g.caseInsensitiveCompare(genre) == .orderedSame
+                                        }
+                                        return false
+                                    }()
+                                ) {
+                                    onSelect(.genre(genre))
+                                }
                             }
                         }
                     }

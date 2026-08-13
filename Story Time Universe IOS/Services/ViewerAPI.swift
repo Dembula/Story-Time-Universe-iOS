@@ -438,7 +438,7 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
         return try api.decode(SearchResponse.self, from: data).results
     }
 
-    /// Production AI search with path fallbacks; keyword search if all routes 404.
+    /// Production AI search with path fallbacks; enhanced catalogue matching if routes 404.
     func aiSearch(query: String, limit: Int = 24) async throws -> AISearchResult {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard q.count >= 2 else {
@@ -450,31 +450,67 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
             "api/browse/ai/search",
             "api/ai/viewer/search",
         ]
-        let body: [String: Any] = ["query": q, "limit": limit]
-        var sawNon404 = false
+        let bodies: [[String: Any]] = [
+            ["query": q, "limit": limit],
+            ["q": q, "limit": limit],
+            ["prompt": q, "limit": limit],
+        ]
 
         for path in paths {
-            do {
-                let (data, response) = try await api.request(path: path, method: "POST", jsonBody: body)
-                if response.statusCode == 404 { continue }
-                sawNon404 = true
-                guard (200...299).contains(response.statusCode) else { continue }
-                if let payload = try? api.decode(AISearchPayload.self, from: data) {
-                    let results = payload.resolvedResults
-                    if !results.isEmpty || payload.resolvedReasoning != nil {
+            for body in bodies {
+                do {
+                    let (data, response) = try await api.request(path: path, method: "POST", jsonBody: body)
+                    if response.statusCode == 404 { break } // try next path
+                    guard (200...299).contains(response.statusCode) else { continue }
+                    if let payload = try? api.decode(AISearchPayload.self, from: data) {
+                        let results = payload.resolvedResults
+                        if !results.isEmpty || payload.resolvedReasoning != nil || !(payload.suggestions ?? []).isEmpty {
+                            var suggestions = payload.suggestions ?? []
+                            if suggestions.isEmpty {
+                                suggestions = Self.contextualSuggestions(for: q, results: results)
+                            }
+                            return AISearchResult(
+                                results: Array(results.prefix(limit)),
+                                reasoning: payload.resolvedReasoning
+                                    ?? "Here are titles that match “\(q)”.",
+                                suggestions: suggestions,
+                                usedFallback: false
+                            )
+                        }
+                    }
+                    if let search = try? api.decode(SearchResponse.self, from: data), !search.results.isEmpty {
                         return AISearchResult(
-                            results: results,
-                            reasoning: payload.resolvedReasoning,
-                            suggestions: payload.suggestions ?? [],
+                            results: Array(search.results.prefix(limit)),
+                            reasoning: "Here are titles that match “\(q)”.",
+                            suggestions: Self.contextualSuggestions(for: q, results: search.results),
                             usedFallback: false
                         )
                     }
+                } catch {
+                    continue
                 }
-                if let search = try? api.decode(SearchResponse.self, from: data), !search.results.isEmpty {
+            }
+        }
+
+        // Also try GET variants some backends expose.
+        for path in paths {
+            do {
+                let (data, response) = try await api.request(
+                    path: path,
+                    query: [
+                        URLQueryItem(name: "q", value: q),
+                        URLQueryItem(name: "query", value: q),
+                        URLQueryItem(name: "limit", value: String(limit)),
+                    ]
+                )
+                if response.statusCode == 404 { continue }
+                guard (200...299).contains(response.statusCode) else { continue }
+                if let payload = try? api.decode(AISearchPayload.self, from: data),
+                   !payload.resolvedResults.isEmpty {
                     return AISearchResult(
-                        results: search.results,
-                        reasoning: nil,
-                        suggestions: [],
+                        results: Array(payload.resolvedResults.prefix(limit)),
+                        reasoning: payload.resolvedReasoning ?? "Here are titles that match “\(q)”.",
+                        suggestions: payload.suggestions ?? Self.contextualSuggestions(for: q, results: payload.resolvedResults),
                         usedFallback: false
                     )
                 }
@@ -483,30 +519,115 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
             }
         }
 
-        // Enhanced keyword fallback when AI routes are missing or empty.
-        let keyword = try await search(query: q)
-        let ranked = Self.rankSearchResults(keyword, query: q)
+        return try await enhancedAIFallback(query: q, limit: limit)
+    }
+
+    /// Multi-term browse search + catalogue vibe scoring so prompts still return useful picks.
+    private func enhancedAIFallback(query: String, limit: Int) async throws -> AISearchResult {
+        let expansions = Self.expandPromptTerms(query)
+        var combined: [SearchResult] = []
+        var seen = Set<String>()
+
+        for term in expansions {
+            let batch = (try? await search(query: term)) ?? []
+            for item in batch where seen.insert(item.id).inserted {
+                combined.append(item)
+            }
+            if combined.count >= limit * 2 { break }
+        }
+
+        // Score against a wider catalogue sample for vibe prompts that don't keyword-match titles.
+        let catalogue = (try? await fetchContent(limit: 60)) ?? []
+        let vibeHits = catalogue
+            .map(\.asSearchResult)
+            .filter { seen.insert($0.id).inserted }
+            .filter { Self.vibeScore($0, prompt: query) > 0 }
+            .sorted { Self.vibeScore($0, prompt: query) > Self.vibeScore($1, prompt: query) }
+
+        combined.append(contentsOf: vibeHits)
+        let ranked = Self.rankSearchResults(combined, query: query)
+            .sorted {
+                let sa = Self.vibeScore($0, prompt: query) + Self.tokenScore($0, query: query)
+                let sb = Self.vibeScore($1, prompt: query) + Self.tokenScore($1, query: query)
+                return sa > sb
+            }
+
+        let final = Array(ranked.prefix(limit))
+        let suggestions = Self.contextualSuggestions(for: query, results: final)
+        let reasoning: String
+        if final.isEmpty {
+            reasoning = "No strong matches for “\(query)” yet. Try a simpler vibe like “comedy”, “thriller”, or a title name."
+        } else {
+            reasoning = "Matched “\(query)” across titles, genres, and related vibes — \(final.count) pick\(final.count == 1 ? "" : "s”)."
+        }
+
         return AISearchResult(
-            results: ranked,
-            reasoning: sawNon404
-                ? "AI search didn’t return matches — showing keyword results instead."
-                : "AI search isn’t available yet — showing the best keyword matches for your vibe.",
-            suggestions: Self.vibeSuggestions(from: q),
+            results: final,
+            reasoning: reasoning,
+            suggestions: suggestions,
             usedFallback: true
         )
     }
 
+    private static func expandPromptTerms(_ query: String) -> [String] {
+        let q = query.lowercased()
+        var terms: [String] = [query]
+
+        let rules: [(needles: [String], add: [String])] = [
+            (["feel-good", "feel good", "cozy", "comfort", "warm", "wholesome", "heartwarming"],
+             ["comedy", "family", "feel-good", "romance"]),
+            (["late night", "latenight", "dark", "gritty", "intense"],
+             ["thriller", "crime", "drama", "horror"]),
+            (["family", "kids", "children", "everyone"],
+             ["family", "animation", "comedy"]),
+            (["quick", "short", "brief", "one sitting"],
+             ["short", "comedy", "documentary"]),
+            (["funny", "comedy", "laugh", "humor", "humour", "skit"],
+             ["comedy", "stand-up", "skit"]),
+            (["scary", "horror", "creepy", "spooky"],
+             ["horror", "thriller"]),
+            (["doc", "documentary", "true story", "real"],
+             ["documentary"]),
+            (["action", "adventure", "fight"],
+             ["action", "adventure"]),
+            (["romance", "love", "date night"],
+             ["romance", "drama"]),
+            (["sports", "football", "soccer", "rugby"],
+             ["sports"]),
+            (["music", "concert", "song"],
+             ["music"]),
+            (["rainy", "rain", "chill", "relax"],
+             ["drama", "comedy", "feel-good"]),
+        ]
+
+        for rule in rules where rule.needles.contains(where: { q.contains($0) }) {
+            terms.append(contentsOf: rule.add)
+        }
+
+        let tokens = q
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { $0.count >= 3 }
+        terms.append(contentsOf: tokens)
+
+        var seen = Set<String>()
+        return terms
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+            .prefix(8)
+            .map { $0 }
+    }
+
     private static func rankSearchResults(_ results: [SearchResult], query: String) -> [SearchResult] {
+        results.sorted { tokenScore($0, query: query) > tokenScore($1, query: query) }
+    }
+
+    private static func tokenScore(_ result: SearchResult, query: String) -> Int {
         let tokens = query.lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .map(String.init)
-        guard !tokens.isEmpty else { return results }
-        return results.sorted { a, b in
-            score(a, tokens: tokens) > score(b, tokens: tokens)
-        }
-    }
-
-    private static func score(_ result: SearchResult, tokens: [String]) -> Int {
+            .filter { $0.count >= 2 }
+        guard !tokens.isEmpty else { return 0 }
         let hay = [
             result.title,
             result.category,
@@ -516,21 +637,100 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
         .compactMap { $0?.lowercased() }
         .joined(separator: " ")
         return tokens.reduce(0) { partial, token in
-            partial + (hay.contains(token) ? 2 : 0) + (hay.hasPrefix(token) ? 1 : 0)
+            partial
+                + (hay.contains(token) ? 3 : 0)
+                + (result.title.lowercased().hasPrefix(token) ? 2 : 0)
         }
     }
 
-    private static func vibeSuggestions(from query: String) -> [String] {
-        let base = [
+    private static func vibeScore(_ result: SearchResult, prompt: String) -> Int {
+        let p = prompt.lowercased()
+        let hay = [
+            result.title,
+            result.category,
+            result.type,
+            result.creatorName,
+        ]
+        .compactMap { $0?.lowercased() }
+        .joined(separator: " ")
+
+        var score = 0
+        let pairs: [(String, [String])] = [
+            ("comedy", ["comedy", "stand", "skit", "funny"]),
+            ("thriller", ["thriller", "crime", "mystery"]),
+            ("horror", ["horror"]),
+            ("documentary", ["documentary", "doc"]),
+            ("family", ["family", "animation", "kids"]),
+            ("romance", ["romance", "love"]),
+            ("sports", ["sport"]),
+            ("drama", ["drama"]),
+            ("action", ["action", "adventure"]),
+            ("music", ["music"]),
+            ("feel", ["comedy", "family", "romance"]),
+            ("cozy", ["comedy", "family", "romance", "drama"]),
+            ("late", ["thriller", "horror", "crime"]),
+        ]
+        for (needle, boosts) in pairs where p.contains(needle) {
+            for b in boosts where hay.contains(b) {
+                score += 4
+            }
+        }
+        return score
+    }
+
+    private static func contextualSuggestions(for query: String, results: [SearchResult]) -> [String] {
+        var out: [String] = []
+        var seen = Set<String>()
+
+        func add(_ s: String) {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard t.count >= 2, seen.insert(t.lowercased()).inserted else { return }
+            out.append(t)
+        }
+
+        // Follow-ups derived from the prompt itself.
+        let q = query.lowercased()
+        if q.contains("comedy") || q.contains("funny") {
+            add("stand-up specials")
+            add("short comedy skits")
+        }
+        if q.contains("family") || q.contains("kids") {
+            add("animation for the family")
+            add("feel-good family films")
+        }
+        if q.contains("thriller") || q.contains("dark") || q.contains("late") {
+            add("crime thrillers")
+            add("suspense dramas")
+        }
+        if q.contains("doc") {
+            add("sports documentaries")
+            add("true stories")
+        }
+        if q.contains("cozy") || q.contains("rain") || q.contains("chill") {
+            add("comfort comedy")
+            add("gentle dramas")
+        }
+
+        // Suggestions from result categories / titles.
+        for item in results.prefix(8) {
+            if let category = item.category, !category.isEmpty {
+                add("more \(category)")
+            }
+        }
+        for item in results.prefix(3) {
+            add("like \(item.title)")
+        }
+
+        let defaults = [
             "feel-good movies",
-            "short thrillers",
-            "family comedy",
-            "late-night vibes",
+            "quick watches",
+            "family night",
+            "late-night thrillers",
             "documentary picks",
         ]
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return Array(base.prefix(4)) }
-        return Array(([q] + base.filter { !$0.localizedCaseInsensitiveContains(q) }).prefix(5))
+        for d in defaults { add(d) }
+
+        return Array(out.prefix(6))
     }
 
     func fetchWatchlist() async throws -> [ContentItem] {

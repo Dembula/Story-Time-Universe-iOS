@@ -196,7 +196,8 @@ struct HomeView: View {
                 if showCategoryPicker {
                     HomeCategoryPickerOverlay(
                         filter: browseFilter,
-                        discoveredGenres: discoveredGenres,
+                        populatedTypeIds: populatedBrowseTypeIds,
+                        populatedGenres: discoveredGenres,
                         onSelect: { applyBrowseFilter($0) },
                         onClose: { showCategoryPicker = false }
                     )
@@ -291,6 +292,25 @@ struct HomeView: View {
             return values
         }
         return []
+    }
+
+    /// Media-type chips that already have at least one title (same idea as Home rows).
+    private var populatedBrowseTypeIds: Set<String> {
+        var ids = Set<String>()
+        let sample = featured + trending + catalogRows.filter(\.shouldDisplay).flatMap(\.items)
+        let presentTypes = Set(sample.compactMap { $0.type?.uppercased() }.filter { !$0.isEmpty })
+
+        for option in CatalogueTypes.browseTypeOptions where option.id != "ALL" {
+            let values = Set(option.typeValues.map { $0.uppercased() })
+            let rowHit = catalogRows.contains { row in
+                row.shouldDisplay && row.resolvedTypeValues.contains { values.contains($0.uppercased()) }
+            }
+            let sampleHit = !presentTypes.isDisjoint(with: values)
+            if rowHit || sampleHit {
+                ids.insert(option.id)
+            }
+        }
+        return ids
     }
 
     private var homeChrome: some View {
@@ -469,20 +489,30 @@ struct HomeView: View {
     }
 
     private func refreshDiscoveredGenres(from items: [ContentItem]) {
-        var seen = Set(discoveredGenres.map { $0.lowercased() })
-        var extra: [String] = []
+        // Only keep genres that actually appear on loaded titles (no empty seed placeholders).
+        var counts: [String: Int] = [:]
+        var displayByKey: [String: String] = [:]
         for item in items {
             if let category = item.category?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !category.isEmpty,
-               seen.insert(category.lowercased()).inserted {
-                extra.append(category)
+               !category.isEmpty {
+                let key = category.lowercased()
+                counts[key, default: 0] += 1
+                displayByKey[key] = category
+            }
+            if let tags = item.tags?.split(separator: ",").map({
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }) {
+                for tag in tags where !tag.isEmpty {
+                    let key = tag.lowercased()
+                    counts[key, default: 0] += 1
+                    if displayByKey[key] == nil { displayByKey[key] = tag }
+                }
             }
         }
-        if !extra.isEmpty {
-            discoveredGenres = (discoveredGenres + extra).sorted {
-                $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
-            }
-        }
+        discoveredGenres = counts.keys
+            .filter { (counts[$0] ?? 0) > 0 }
+            .compactMap { displayByKey[$0] }
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     private func fetchAllTypeRows() async -> [HomeCatalogRow] {
