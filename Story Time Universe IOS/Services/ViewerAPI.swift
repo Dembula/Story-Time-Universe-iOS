@@ -472,7 +472,7 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
                             return AISearchResult(
                                 results: Array(results.prefix(limit)),
                                 reasoning: payload.resolvedReasoning
-                                    ?? "Here are titles that match “\(q)”.",
+                                    ?? "Here are titles that match \"\(q)\".",
                                 suggestions: suggestions,
                                 usedFallback: false
                             )
@@ -481,7 +481,7 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
                     if let search = try? api.decode(SearchResponse.self, from: data), !search.results.isEmpty {
                         return AISearchResult(
                             results: Array(search.results.prefix(limit)),
-                            reasoning: "Here are titles that match “\(q)”.",
+                            reasoning: "Here are titles that match \"\(q)\".",
                             suggestions: Self.contextualSuggestions(for: q, results: search.results),
                             usedFallback: false
                         )
@@ -509,7 +509,7 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
                    !payload.resolvedResults.isEmpty {
                     return AISearchResult(
                         results: Array(payload.resolvedResults.prefix(limit)),
-                        reasoning: payload.resolvedReasoning ?? "Here are titles that match “\(q)”.",
+                        reasoning: payload.resolvedReasoning ?? "Here are titles that match \"\(q)\".",
                         suggestions: payload.suggestions ?? Self.contextualSuggestions(for: q, results: payload.resolvedResults),
                         usedFallback: false
                     )
@@ -554,11 +554,12 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
 
         let final = Array(ranked.prefix(limit))
         let suggestions = Self.contextualSuggestions(for: query, results: final)
+        let pickWord = final.count == 1 ? "pick" : "picks"
         let reasoning: String
         if final.isEmpty {
-            reasoning = "No strong matches for “\(query)” yet. Try a simpler vibe like “comedy”, “thriller”, or a title name."
+            reasoning = "No strong matches for \"\(query)\" yet. Try a simpler vibe like comedy, thriller, or a title name."
         } else {
-            reasoning = "Matched “\(query)” across titles, genres, and related vibes — \(final.count) pick\(final.count == 1 ? "" : "s”)."
+            reasoning = "Matched \"\(query)\" across titles, genres, and related vibes — \(final.count) \(pickWord)."
         }
 
         return AISearchResult(
