@@ -146,7 +146,7 @@ enum CatalogueTypes {
         return longFormTypes.contains(type.uppercased())
     }
 
-    /// Seeded genre labels for the Netflix-style category picker.
+    /// Canonical genre labels for the Home category picker (not free-form tags).
     static let seedGenres: [String] = [
         "Action & Adventure",
         "Animation",
@@ -160,7 +160,95 @@ enum CatalogueTypes {
         "Sci-Fi",
         "Sports",
         "Thriller",
+        "Fantasy",
+        "Mystery",
+        "Family",
+        "Western",
+        "War",
+        "Music",
+        "History",
+        "Biography",
     ]
+
+    /// Alias / keyword → canonical genre display name.
+    private static let genreAliases: [String: String] = {
+        var map: [String: String] = [:]
+        for genre in seedGenres {
+            map[genre.lowercased()] = genre
+            let compact = genre
+                .lowercased()
+                .replacingOccurrences(of: "&", with: "and")
+                .replacingOccurrences(of: "-", with: " ")
+            map[compact] = genre
+        }
+        // Common variants creators might store in `category`.
+        map["action"] = "Action & Adventure"
+        map["adventure"] = "Action & Adventure"
+        map["action adventure"] = "Action & Adventure"
+        map["action and adventure"] = "Action & Adventure"
+        map["sci fi"] = "Sci-Fi"
+        map["scifi"] = "Sci-Fi"
+        map["science fiction"] = "Sci-Fi"
+        map["feel good"] = "Feel-Good"
+        map["feelgood"] = "Feel-Good"
+        map["doc"] = "Documentary"
+        map["docs"] = "Documentary"
+        map["kids"] = "Family"
+        map["children"] = "Family"
+        return map
+    }()
+
+    /// Strip hashtags / noise and map a raw label to a known genre, if any.
+    static func canonicalGenre(from raw: String?) -> String? {
+        guard var value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        // Drop leading # and other tag punctuation.
+        while value.hasPrefix("#") {
+            value.removeFirst()
+        }
+        value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        let key = value
+            .lowercased()
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "&", with: "and")
+            .replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let exact = genreAliases[key] { return exact }
+        if let exact = genreAliases[value.lowercased()] { return exact }
+
+        // Allow "Drama Series" / "Sci-Fi Movie" style categories to count.
+        for genre in seedGenres {
+            let g = genre.lowercased()
+            if key == g || key.hasPrefix(g + " ") || key.hasSuffix(" " + g) || key.contains(" " + g + " ") {
+                return genre
+            }
+        }
+        return nil
+    }
+
+    /// Genres that currently appear on loaded titles (known list only — no free-form tags).
+    static func populatedGenres(from items: [ContentItem]) -> [String] {
+        var found = Set<String>()
+        for item in items {
+            if let genre = canonicalGenre(from: item.category) {
+                found.insert(genre)
+            }
+            // Only accept tag tokens that map to a known genre (ignore #hashtags / junk).
+            if let tags = item.tags {
+                for part in tags.split(whereSeparator: { $0 == "," || $0 == ";" || $0 == "|" }) {
+                    if let genre = canonicalGenre(from: String(part)) {
+                        found.insert(genre)
+                    }
+                }
+            }
+        }
+        return found.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
 
     /// Media-type entries shown at the top of the Home category overlay.
     static var browseTypeOptions: [(id: String, title: String, typeValues: [String])] {

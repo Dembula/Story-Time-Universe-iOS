@@ -119,6 +119,7 @@ struct CatalogueListView: View {
             if let genre = request.genre {
                 let sample = (try? await ViewerAPI.shared.fetchContent(limit: 80)) ?? []
                 combined = sample.filter { $0.matchesGenre(genre) }
+                // Prefer category matches; keep parental filter later.
             } else {
                 let def = CatalogueTypes.RowDefinition(
                     id: request.id,

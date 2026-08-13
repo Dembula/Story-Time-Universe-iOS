@@ -1,38 +1,32 @@
 import SwiftUI
 
-/// Professional AI search sheet — results above, composer pinned to the bottom.
+/// Chat-style AI search: prompt clears on send, AI replies with a written report + picks.
 struct AISearchView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var parental = ParentalControls.shared
     var onSwitchToStandard: () -> Void
 
     @State private var query = ""
-    @State private var result: AISearchResult?
+    @State private var turns: [AIChatTurn] = []
     @State private var isSearching = false
-    @State private var errorMessage: String?
     @State private var selected: ContentItem?
     @FocusState private var fieldFocused: Bool
 
     private let starterPrompts = [
-        "Feel-good comedy",
-        "Late-night thriller",
-        "Family night",
-        "Quick watch",
-        "Documentary",
-        "Something cozy",
+        "Feel-good comedy for a rainy night",
+        "Something intense for late night",
+        "Family night picks",
+        "A quick watch under an hour",
+        "Documentary that feels real",
+        "Cozy and comforting",
     ]
 
     private var profileAge: Int? { appState.activeProfile?.age }
 
-    private var visibleResults: [SearchResult] {
-        guard let results = result?.results else { return [] }
-        return filtered(results)
-    }
-
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                resultsPane
+                chatPane
                 Divider().background(Theme.border)
                 composer
             }
@@ -68,118 +62,203 @@ struct AISearchView: View {
         .preferredColorScheme(.dark)
     }
 
-    @ViewBuilder
-    private var resultsPane: some View {
+    private var chatPane: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    intro
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    if turns.isEmpty {
+                        emptyState
+                    }
+
+                    ForEach(turns) { turn in
+                        userBubble(turn.prompt)
+                        assistantBlock(turn)
+                            .id(turn.id)
+                    }
 
                     if isSearching {
-                        HStack(spacing: 10) {
-                            ProgressView().tint(Theme.accent)
-                            Text("Finding matches…")
-                                .font(.subheadline)
-                                .foregroundStyle(Theme.muted)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
+                        thinkingRow
+                            .id("thinking")
                     }
 
-                    if let reasoning = result?.reasoning, !reasoning.isEmpty {
-                        Text(reasoning)
-                            .font(.subheadline)
-                            .foregroundStyle(Theme.muted)
-                            .padding(14)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Theme.card)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-
-                    if let suggestions = result?.suggestions, !suggestions.isEmpty {
-                        suggestionChips(suggestions)
-                    }
-
-                    if !visibleResults.isEmpty {
-                        Text("Suggestions")
-                            .font(.headline)
-                            .foregroundStyle(Theme.foreground)
-
-                        LazyVStack(spacing: 0) {
-                            ForEach(visibleResults) { item in
-                                Button {
-                                    selected = item.asContentItem
-                                } label: {
-                                    resultRow(item)
-                                }
-                                .buttonStyle(.plain)
-                                Divider().background(Theme.border)
-                            }
-                        }
-                    } else if result != nil, !isSearching {
-                        ContentUnavailableView(
-                            "No matches",
-                            systemImage: "sparkles",
-                            description: Text("Try a simpler prompt — a mood, genre, or title.")
-                        )
-                        .foregroundStyle(Theme.muted)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 24)
-                    }
-
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-
-                    Color.clear.frame(height: 8).id("bottom")
+                    Color.clear.frame(height: 4).id("chatBottom")
                 }
-                .padding(20)
+                .padding(16)
             }
-            .onChange(of: visibleResults.map(\.id)) { _, _ in
-                withAnimation(.easeOut(duration: 0.25)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
+            .onChange(of: turns.count) { _, _ in
+                scrollToBottom(proxy)
+            }
+            .onChange(of: isSearching) { _, _ in
+                scrollToBottom(proxy)
             }
         }
     }
 
-    private var intro: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label("Describe what you feel like watching", systemImage: "sparkles")
-                .font(.subheadline.weight(.semibold))
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Ask like you’d ask a friend", systemImage: "sparkles")
+                .font(.headline)
                 .foregroundStyle(Theme.foreground)
-            Text("Ask for a mood, genre, or vibe — we’ll suggest titles from the Story Time catalogue.")
-                .font(.footnote)
+            Text("Describe a mood or situation — I’ll interpret it, explain what I’m looking for, and suggest titles from Story Time.")
+                .font(.subheadline)
                 .foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var thinkingRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(Theme.accent)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Thinking…")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.foreground)
+                Text("Interpreting your vibe and scanning the catalogue.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.muted)
+                ProgressView()
+                    .tint(Theme.accent)
+                    .padding(.top, 4)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func userBubble(_ text: String) -> some View {
+        HStack {
+            Spacer(minLength: 40)
+            Text(text)
+                .font(.body)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Theme.accent.opacity(0.9))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+    }
+
+    private func assistantBlock(_ turn: AIChatTurn) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Theme.accent)
+                Text("AI")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Theme.accent)
+                Spacer()
+            }
+
+            if let error = turn.error {
+                Text(error)
+                    .font(.subheadline)
+                    .foregroundStyle(.red)
+            } else if let report = turn.report {
+                Text(report)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.foreground.opacity(0.92))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !turn.moodTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(turn.moodTags, id: \.self) { tag in
+                            Text(tag)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Theme.muted)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.white.opacity(0.06))
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+            }
+
+            let picks = filtered(turn.results)
+            if !picks.isEmpty {
+                Text("Recommended for you")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.foreground)
+                    .padding(.top, 4)
+
+                ForEach(picks) { item in
+                    Button {
+                        selected = item.asContentItem
+                    } label: {
+                        resultRow(item)
+                    }
+                    .buttonStyle(.plain)
+                    Divider().background(Theme.border)
+                }
+            }
+
+            if !turn.suggestions.isEmpty {
+                Text("Ask next")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.muted)
+                    .padding(.top, 6)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(turn.suggestions, id: \.self) { suggestion in
+                            Button {
+                                Task { await send(suggestion) }
+                            } label: {
+                                Text(suggestion)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(Theme.accent)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(Theme.accent.opacity(0.12))
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(starterPrompts, id: \.self) { prompt in
-                        Button {
-                            query = prompt
-                            Task { await runAISearch() }
-                        } label: {
-                            Text(prompt)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(Theme.foreground)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(Color.white.opacity(0.08))
-                                .clipShape(Capsule())
+        VStack(alignment: .leading, spacing: 10) {
+            if turns.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(starterPrompts, id: \.self) { prompt in
+                            Button {
+                                Task { await send(prompt) }
+                            } label: {
+                                Text(prompt)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(Theme.foreground)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(Color.white.opacity(0.08))
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
 
             HStack(alignment: .bottom, spacing: 10) {
-                TextField("e.g. cozy comedy for a rainy evening", text: $query, axis: .vertical)
+                TextField("Describe a vibe…", text: $query, axis: .vertical)
                     .lineLimit(1...4)
                     .textInputAutocapitalization(.sentences)
                     .focused($fieldFocused)
@@ -192,21 +271,21 @@ struct AISearchView: View {
                             .stroke(Theme.border, lineWidth: 1)
                     )
                     .onSubmit {
-                        Task { await runAISearch() }
+                        Task { await send(query) }
                     }
 
                 Button {
-                    Task { await runAISearch() }
+                    Task { await send(query) }
                 } label: {
                     Image(systemName: "arrow.up")
                         .font(.body.weight(.bold))
-                        .foregroundStyle(canSearch ? .black : Theme.muted)
+                        .foregroundStyle(canSend ? .black : Theme.muted)
                         .frame(width: 44, height: 44)
-                        .background(canSearch ? Theme.accent : Color.white.opacity(0.08))
+                        .background(canSend ? Theme.accent : Color.white.opacity(0.08))
                         .clipShape(Circle())
                 }
-                .disabled(!canSearch || isSearching)
-                .accessibilityLabel("Search")
+                .disabled(!canSend || isSearching)
+                .accessibilityLabel("Send")
             }
         }
         .padding(.horizontal, 16)
@@ -219,36 +298,8 @@ struct AISearchView: View {
         )
     }
 
-    private var canSearch: Bool {
+    private var canSend: Bool {
         query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2
-    }
-
-    private func suggestionChips(_ suggestions: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Try also")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Theme.muted)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(suggestions, id: \.self) { suggestion in
-                        Button {
-                            query = suggestion
-                            Task { await runAISearch() }
-                        } label: {
-                            Text(suggestion)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(Theme.accent)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(Theme.accent.opacity(0.12))
-                                .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-        }
     }
 
     private func resultRow(_ item: SearchResult) -> some View {
@@ -279,7 +330,7 @@ struct AISearchView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Theme.muted)
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
     }
 
@@ -288,19 +339,84 @@ struct AISearchView: View {
         return results.filter { allowed.contains($0.id) }
     }
 
-    private func runAISearch() async {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard q.count >= 2 else { return }
-        fieldFocused = false
-        isSearching = true
-        errorMessage = nil
-        defer { isSearching = false }
-        do {
-            let response = try await ViewerAPI.shared.aiSearch(query: q)
-            result = response
-            ImagePrefetcher.prefetchPosters(response.results.map(\.asContentItem))
-        } catch {
-            errorMessage = error.localizedDescription
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.28)) {
+            proxy.scrollTo(isSearching ? "thinking" : "chatBottom", anchor: .bottom)
         }
     }
+
+    private func send(_ raw: String) async {
+        let prompt = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard prompt.count >= 2, !isSearching else { return }
+
+        // Chat behaviour: clear the composer immediately.
+        query = ""
+        fieldFocused = false
+        isSearching = true
+
+        let pending = AIChatTurn(
+            prompt: prompt,
+            report: nil,
+            moodTags: [],
+            results: [],
+            suggestions: [],
+            error: nil
+        )
+        turns.append(pending)
+        let turnId = pending.id
+
+        do {
+            let response = try await ViewerAPI.shared.aiSearch(query: prompt)
+            let report = response.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? (response.reasoning ?? "")
+                : ViewerAPI.buildAIReport(
+                    prompt: prompt,
+                    results: response.results,
+                    searchLenses: [],
+                    usedRemoteAI: !response.usedFallback
+                )
+
+            if let index = turns.firstIndex(where: { $0.id == turnId }) {
+                turns[index].report = report
+                turns[index].moodTags = Self.moodChips(from: prompt)
+                turns[index].results = response.results
+                turns[index].suggestions = response.suggestions
+            }
+            ImagePrefetcher.prefetchPosters(response.results.map(\.asContentItem))
+        } catch {
+            if let index = turns.firstIndex(where: { $0.id == turnId }) {
+                turns[index].error = error.localizedDescription
+                turns[index].report = "I hit a snag while thinking that through. Try again in a moment."
+            }
+        }
+
+        isSearching = false
+    }
+
+    private static func moodChips(from prompt: String) -> [String] {
+        let q = prompt.lowercased()
+        var tags: [String] = []
+        func add(_ t: String) { if !tags.contains(t) { tags.append(t) } }
+        if q.contains("cozy") || q.contains("rain") || q.contains("comfort") { add("Cozy") }
+        if q.contains("feel") || q.contains("wholesome") { add("Feel-good") }
+        if q.contains("late") || q.contains("dark") || q.contains("intense") { add("Late night") }
+        if q.contains("funny") || q.contains("comedy") || q.contains("laugh") { add("Comedy") }
+        if q.contains("family") || q.contains("kids") { add("Family") }
+        if q.contains("thriller") || q.contains("mystery") { add("Thriller") }
+        if q.contains("horror") || q.contains("scary") { add("Horror") }
+        if q.contains("doc") { add("Documentary") }
+        if q.contains("quick") || q.contains("short") { add("Quick watch") }
+        if q.contains("romance") || q.contains("date") { add("Romance") }
+        return Array(tags.prefix(5))
+    }
+}
+
+private struct AIChatTurn: Identifiable {
+    let id = UUID()
+    let prompt: String
+    var report: String?
+    var moodTags: [String]
+    var results: [SearchResult]
+    var suggestions: [String]
+    var error: String?
 }

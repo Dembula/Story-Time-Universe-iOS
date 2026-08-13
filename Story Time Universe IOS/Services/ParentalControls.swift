@@ -106,10 +106,31 @@ final class ParentalControls: ObservableObject {
 
 extension ContentItem {
     func matchesGenre(_ genre: String) -> Bool {
-        let needle = genre.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return false }
-        if let category, category.lowercased().contains(needle) { return true }
-        if let tags, tags.lowercased().contains(needle) { return true }
+        let target = CatalogueTypes.canonicalGenre(from: genre) ?? genre.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return false }
+        let targetKey = target.lowercased()
+
+        if let categoryGenre = CatalogueTypes.canonicalGenre(from: category),
+           categoryGenre.lowercased() == targetKey {
+            return true
+        }
+        // Category free-text may still contain the genre name.
+        if let category, category.lowercased().contains(targetKey) {
+            // Avoid matching noise tags that only partially overlap known genres via coincidence.
+            if CatalogueTypes.canonicalGenre(from: category) != nil || CatalogueTypes.seedGenres.contains(where: {
+                category.localizedCaseInsensitiveContains($0)
+            }) {
+                return true
+            }
+        }
+        if let tags = tags {
+            for part in tags.split(whereSeparator: { $0 == "," || $0 == ";" || $0 == "|" }) {
+                if let tagGenre = CatalogueTypes.canonicalGenre(from: String(part)),
+                   tagGenre.lowercased() == targetKey {
+                    return true
+                }
+            }
+        }
         return false
     }
 }

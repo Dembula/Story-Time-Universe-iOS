@@ -478,9 +478,6 @@ struct HomeView: View {
             catalogRows: catalogRows
         )
 
-        let warmIds = (featured + trending).prefix(6).map(\.id)
-        await PlaybackWarmCache.shared.warmMany(contentIds: Array(warmIds))
-
         if featured.isEmpty && trending.isEmpty && catalogRows.allSatisfy(\.items.isEmpty) {
             errorMessage = "Could not load the catalogue. Pull to refresh."
         } else {
@@ -489,30 +486,9 @@ struct HomeView: View {
     }
 
     private func refreshDiscoveredGenres(from items: [ContentItem]) {
-        // Only keep genres that actually appear on loaded titles (no empty seed placeholders).
-        var counts: [String: Int] = [:]
-        var displayByKey: [String: String] = [:]
-        for item in items {
-            if let category = item.category?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !category.isEmpty {
-                let key = category.lowercased()
-                counts[key, default: 0] += 1
-                displayByKey[key] = category
-            }
-            if let tags = item.tags?.split(separator: ",").map({
-                $0.trimmingCharacters(in: .whitespacesAndNewlines)
-            }) {
-                for tag in tags where !tag.isEmpty {
-                    let key = tag.lowercased()
-                    counts[key, default: 0] += 1
-                    if displayByKey[key] == nil { displayByKey[key] = tag }
-                }
-            }
-        }
-        discoveredGenres = counts.keys
-            .filter { (counts[$0] ?? 0) > 0 }
-            .compactMap { displayByKey[$0] }
-            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        // Only canonical genres (Drama, Sci-Fi, Thriller, …) that appear on loaded titles.
+        // Free-form tags / hashtags are ignored until they map to a known genre.
+        discoveredGenres = CatalogueTypes.populatedGenres(from: items)
     }
 
     private func fetchAllTypeRows() async -> [HomeCatalogRow] {

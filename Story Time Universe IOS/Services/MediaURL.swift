@@ -6,7 +6,9 @@ enum MediaURL {
         posterUrl: String?,
         backdropUrl: String? = nil,
         videoUrl: String? = nil,
-        preferBackdrop: Bool = false
+        preferBackdrop: Bool = false,
+        /// Cloudflare Stream frame grabs look like “video playing” — keep off hero art.
+        allowStreamThumbnail: Bool = true
     ) -> [URL] {
         var seen = Set<String>()
         var result: [URL] = []
@@ -24,14 +26,16 @@ enum MediaURL {
         let backdropKey = normalizedKey(backdropUrl)
 
         if preferBackdrop {
-            // Hero / Continue Watching — wide art first.
+            // Wide still art first (backdrop), then poster — never insert stream frames early.
             append(displayableHTTPURL(from: primary))
             append(previewProxyURL(from: primary))
             append(siteRelativeURL(from: primary))
-            append(streamThumbnailURL(from: videoUrl, time: "5s", height: 720, width: nil))
             append(displayableHTTPURL(from: secondary))
             append(previewProxyURL(from: secondary))
             append(siteRelativeURL(from: secondary))
+            if allowStreamThumbnail {
+                append(streamThumbnailURL(from: videoUrl, time: "5s", height: 720, width: nil))
+            }
         } else {
             // Poster cards — never use backdrop URLs.
             // Order matters: real poster sources first. Do NOT fall back to Stream video
@@ -42,13 +46,14 @@ enum MediaURL {
             append(posterOnly(siteRelativeURL(from: primary), excludingBackdrop: backdropKey))
 
             let hasPosterArt = !(posterUrl?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-            if !hasPosterArt {
+            if !hasPosterArt, allowStreamThumbnail {
                 append(streamThumbnailURL(from: videoUrl, time: "2s", height: 480, width: 320))
             }
         }
 
-        if result.count > 4 {
-            return Array(result.prefix(4))
+        let limit = preferBackdrop ? 6 : 4
+        if result.count > limit {
+            return Array(result.prefix(limit))
         }
         return result
     }
@@ -57,13 +62,15 @@ enum MediaURL {
         posterUrl: String?,
         backdropUrl: String? = nil,
         videoUrl: String? = nil,
-        preferBackdrop: Bool = false
+        preferBackdrop: Bool = false,
+        allowStreamThumbnail: Bool = true
     ) -> URL? {
         candidates(
             posterUrl: posterUrl,
             backdropUrl: backdropUrl,
             videoUrl: videoUrl,
-            preferBackdrop: preferBackdrop
+            preferBackdrop: preferBackdrop,
+            allowStreamThumbnail: allowStreamThumbnail
         ).first
     }
 

@@ -63,13 +63,28 @@ struct ContentItem: Codable, Identifiable, Hashable {
     }
 
     var posterCandidates: [URL] {
-        MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
+        MediaURL.candidates(
+            posterUrl: posterUrl,
+            backdropUrl: backdropUrl,
+            videoUrl: videoUrl,
+            preferBackdrop: false,
+            allowStreamThumbnail: false
+        )
     }
 
     var backdropCandidates: [URL] {
-        let list = MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
+        let list = MediaURL.candidates(
+            posterUrl: posterUrl,
+            backdropUrl: backdropUrl,
+            videoUrl: videoUrl,
+            preferBackdrop: true,
+            allowStreamThumbnail: false
+        )
         return list.isEmpty ? posterCandidates : list
     }
+
+    /// Home hero — still artwork only (never Cloudflare Stream video frames).
+    var heroBackdropCandidates: [URL] { backdropCandidates }
 
     var posterURL: URL? { posterCandidates.first }
     var backdropURL: URL? { backdropCandidates.first }
@@ -165,11 +180,24 @@ struct ContinueWatchingItem: Codable, Identifiable, Hashable {
     let progressPercent: Int?
 
     var posterCandidates: [URL] {
-        MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
+        MediaURL.candidates(
+            posterUrl: posterUrl,
+            backdropUrl: backdropUrl,
+            videoUrl: videoUrl,
+            preferBackdrop: false,
+            allowStreamThumbnail: false
+        )
     }
 
     var backdropCandidates: [URL] {
-        let list = MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
+        // Continue Watching may lack stills — allow a single static stream thumb as last resort.
+        let list = MediaURL.candidates(
+            posterUrl: posterUrl,
+            backdropUrl: backdropUrl,
+            videoUrl: videoUrl,
+            preferBackdrop: true,
+            allowStreamThumbnail: true
+        )
         return list.isEmpty ? posterCandidates : list
     }
 
@@ -282,11 +310,23 @@ struct ContentDetail: Codable, Identifiable, Hashable {
     let btsVideos: [BtsVideo]?
 
     var posterCandidates: [URL] {
-        MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: false)
+        MediaURL.candidates(
+            posterUrl: posterUrl,
+            backdropUrl: backdropUrl,
+            videoUrl: videoUrl,
+            preferBackdrop: false,
+            allowStreamThumbnail: false
+        )
     }
 
     var backdropCandidates: [URL] {
-        let list = MediaURL.candidates(posterUrl: posterUrl, backdropUrl: backdropUrl, videoUrl: videoUrl, preferBackdrop: true)
+        let list = MediaURL.candidates(
+            posterUrl: posterUrl,
+            backdropUrl: backdropUrl,
+            videoUrl: videoUrl,
+            preferBackdrop: true,
+            allowStreamThumbnail: false
+        )
         return list.isEmpty ? posterCandidates : list
     }
 

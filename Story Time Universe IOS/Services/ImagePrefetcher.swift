@@ -9,7 +9,7 @@ enum ImagePrefetcher {
     }
 
     static func prefetchBackdrops(_ items: [ContentItem]) {
-        prefetch(items.map(\.backdropCandidates), preferPortrait: false)
+        prefetch(items.map(\.heroBackdropCandidates), preferPortrait: false)
     }
 
     static func prefetchContinueWatching(_ items: [ContinueWatchingItem]) {

@@ -38,6 +38,8 @@ struct HeroCarousel: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .frame(width: width, height: height)
+                // Prevent off-screen pages from looking like background video motion.
+                .clipped()
                 .onChange(of: index) { _, _ in
                     if advancingProgrammatically {
                         advancingProgrammatically = false
@@ -82,7 +84,10 @@ struct HeroCarousel: View {
             guard items.count > 1 else { return }
             await MainActor.run {
                 advancingProgrammatically = true
-                withAnimation(.easeInOut(duration: 0.45)) {
+                // Avoid long cross-fades that make adjacent frames feel like video.
+                var transaction = Transaction(animation: .easeInOut(duration: 0.35))
+                transaction.disablesAnimations = false
+                withTransaction(transaction) {
                     index = (index + 1) % items.count
                 }
             }
@@ -110,8 +115,10 @@ struct HeroCard: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            RemoteImage(urls: item.backdropCandidates)
+            RemoteImage(urls: item.heroBackdropCandidates)
                 .frame(width: width - (fullBleed ? 0 : 24), height: height)
+                .clipped()
+                .allowsHitTesting(false)
 
             // Top fade for status/title overlay readability
             LinearGradient(

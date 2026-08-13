@@ -472,7 +472,12 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
                             return AISearchResult(
                                 results: Array(results.prefix(limit)),
                                 reasoning: payload.resolvedReasoning
-                                    ?? "Here are titles that match \"\(q)\".",
+                                    ?? Self.buildAIReport(
+                                        prompt: q,
+                                        results: results,
+                                        searchLenses: Self.expandPromptTerms(q),
+                                        usedRemoteAI: true
+                                    ),
                                 suggestions: suggestions,
                                 usedFallback: false
                             )
@@ -481,7 +486,12 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
                     if let search = try? api.decode(SearchResponse.self, from: data), !search.results.isEmpty {
                         return AISearchResult(
                             results: Array(search.results.prefix(limit)),
-                            reasoning: "Here are titles that match \"\(q)\".",
+                            reasoning: Self.buildAIReport(
+                                prompt: q,
+                                results: search.results,
+                                searchLenses: Self.expandPromptTerms(q),
+                                usedRemoteAI: true
+                            ),
                             suggestions: Self.contextualSuggestions(for: q, results: search.results),
                             usedFallback: false
                         )
@@ -509,7 +519,12 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
                    !payload.resolvedResults.isEmpty {
                     return AISearchResult(
                         results: Array(payload.resolvedResults.prefix(limit)),
-                        reasoning: payload.resolvedReasoning ?? "Here are titles that match \"\(q)\".",
+                        reasoning: payload.resolvedReasoning ?? Self.buildAIReport(
+                            prompt: q,
+                            results: payload.resolvedResults,
+                            searchLenses: Self.expandPromptTerms(q),
+                            usedRemoteAI: true
+                        ),
                         suggestions: payload.suggestions ?? Self.contextualSuggestions(for: q, results: payload.resolvedResults),
                         usedFallback: false
                     )
@@ -554,23 +569,119 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
 
         let final = Array(ranked.prefix(limit))
         let suggestions = Self.contextualSuggestions(for: query, results: final)
-        let pickWord = final.count == 1 ? "pick" : "picks"
-        let reasoning: String
-        if final.isEmpty {
-            reasoning = "No strong matches for \"\(query)\" yet. Try a simpler vibe like comedy, thriller, or a title name."
-        } else {
-            reasoning = "Matched \"\(query)\" across titles, genres, and related vibes — \(final.count) \(pickWord)."
-        }
+        let report = Self.buildAIReport(
+            prompt: query,
+            results: final,
+            searchLenses: expansions,
+            usedRemoteAI: false
+        )
 
         return AISearchResult(
             results: final,
-            reasoning: reasoning,
+            reasoning: report,
             suggestions: suggestions,
             usedFallback: true
         )
     }
 
-    private static func expandPromptTerms(_ query: String) -> [String] {
+    /// Narrative “what I think” report so the UI feels like AI, not keyword search.
+    nonisolated static func buildAIReport(
+        prompt: String,
+        results: [SearchResult],
+        searchLenses: [String],
+        usedRemoteAI: Bool
+    ) -> String {
+        let moods = interpretMood(prompt)
+        var parts: [String] = []
+
+        parts.append("You said: \"\(prompt)\".")
+
+        if moods.isEmpty {
+            parts.append("I'm treating that as a free-form brief — looking across titles, genres, and tones in the Story Time catalogue.")
+        } else {
+            parts.append("Here's how I'm reading it: \(moods.joined(separator: "; ")).")
+        }
+
+        let lenses = searchLenses
+            .filter { $0.caseInsensitiveCompare(prompt) != .orderedSame }
+            .prefix(5)
+        if !lenses.isEmpty {
+            parts.append("So I searched for vibes like \(lenses.map { "\"\($0)\"" }.joined(separator: ", ")).")
+        }
+
+        if results.isEmpty {
+            parts.append("I couldn't find a strong match yet. Try a clearer mood (comedy, thriller, cozy) or a genre word — I'll rethink it.")
+        } else {
+            let top = results.prefix(3)
+            let highlights = top.map { item -> String in
+                let meta = [item.category, item.type]
+                    .compactMap { $0 }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " · ")
+                if meta.isEmpty {
+                    return "• \(item.title)"
+                }
+                return "• \(item.title) (\(meta)) — fits this brief"
+            }.joined(separator: "\n")
+
+            parts.append("My top picks for you:\n\(highlights)")
+
+            if results.count > 3 {
+                parts.append("Plus \(results.count - 3) more below that lean the same way.")
+            } else {
+                parts.append("Tap any title to open it.")
+            }
+        }
+
+        if !usedRemoteAI {
+            parts.append("Tip: the more specific the mood, the better my next round will be.")
+        }
+
+        return parts.joined(separator: "\n\n")
+    }
+
+    nonisolated private static func interpretMood(_ prompt: String) -> [String] {
+        let q = prompt.lowercased()
+        var moods: [String] = []
+        func add(_ line: String) { if !moods.contains(line) { moods.append(line) } }
+
+        if q.contains("cozy") || q.contains("rain") || q.contains("chill") || q.contains("comfort") {
+            add("comfort / low-stress viewing")
+        }
+        if q.contains("feel-good") || q.contains("feel good") || q.contains("wholesome") || q.contains("heartwarming") {
+            add("uplifting, feel-good energy")
+        }
+        if q.contains("late") || q.contains("dark") || q.contains("gritty") || q.contains("intense") {
+            add("late-night / intense tone")
+        }
+        if q.contains("funny") || q.contains("comedy") || q.contains("laugh") || q.contains("humor") || q.contains("humour") {
+            add("comedy first")
+        }
+        if q.contains("scary") || q.contains("horror") || q.contains("creepy") {
+            add("horror / suspense")
+        }
+        if q.contains("family") || q.contains("kids") || q.contains("everyone") {
+            add("something the whole family can watch")
+        }
+        if q.contains("quick") || q.contains("short") || q.contains("brief") {
+            add("shorter / easy to finish")
+        }
+        if q.contains("doc") || q.contains("true story") || q.contains("real") {
+            add("documentary / true stories")
+        }
+        if q.contains("romance") || q.contains("date") || q.contains("love") {
+            add("romance / date-night mood")
+        }
+        if q.contains("action") || q.contains("adventure") {
+            add("action & adventure")
+        }
+        if q.contains("thriller") || q.contains("mystery") || q.contains("crime") {
+            add("thriller / mystery")
+        }
+        return moods
+    }
+
+    nonisolated private static func expandPromptTerms(_ query: String) -> [String] {
         let q = query.lowercased()
         var terms: [String] = [query]
 
