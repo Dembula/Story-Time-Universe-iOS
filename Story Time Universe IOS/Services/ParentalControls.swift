@@ -92,4 +92,24 @@ final class ParentalControls: ObservableObject {
         default: return "Adult (unrestricted)"
         }
     }
+
+    /// Best-effort sync of maturity flags from viewer settings (PIN stays on-device).
+    func applyRemoteMaturityHints(enabled: Bool?, maxAge: Int?) {
+        if let enabled {
+            isEnabled = enabled
+        }
+        if let maxAge, maxAge > 0 {
+            maxMaturityAge = maxAge
+        }
+    }
+}
+
+extension ContentItem {
+    func matchesGenre(_ genre: String) -> Bool {
+        let needle = genre.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return false }
+        if let category, category.lowercased().contains(needle) { return true }
+        if let tags, tags.lowercased().contains(needle) { return true }
+        return false
+    }
 }

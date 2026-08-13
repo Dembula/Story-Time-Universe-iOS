@@ -11,6 +11,8 @@ struct PlayerContainerView: View {
     var episodeId: String?
     var isTrailer: Bool = false
     var episodes: [EpisodePlaybackInfo] = []
+    /// When true, skip resume progress and start at 0.
+    var forceRestart: Bool = false
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appState: AppState
@@ -95,7 +97,12 @@ struct PlayerContainerView: View {
             OrientationLock.lockLandscape()
             currentEpisodeId = episodeId
             brightness = Double(UIScreen.main.brightness)
-            await model.start(contentId: contentId, episodeId: episodeId, trailer: isTrailer)
+            await model.start(
+                contentId: contentId,
+                episodeId: episodeId,
+                trailer: isTrailer,
+                forceRestart: forceRestart
+            )
             offerRestartWindow()
             scheduleHideControls()
         }
@@ -914,7 +921,7 @@ final class PlayerViewModel: ObservableObject {
     private var lastSavedPosition: Double = 0
     private var suppressProgressNetwork = false
 
-    func start(contentId: String, episodeId: String?, trailer: Bool = false) async {
+    func start(contentId: String, episodeId: String?, trailer: Bool = false, forceRestart: Bool = false) async {
         // Always tear down previous session first — critical for stability.
         tearDownPlayer(flushProgress: true)
 
@@ -973,7 +980,7 @@ final class PlayerViewModel: ObservableObject {
             guard generation == startGeneration else { return }
 
             let resumeAt: Int
-            if trailer || isOffline {
+            if trailer || isOffline || forceRestart {
                 resumeAt = 0
             } else {
                 resumeAt = (try? await ViewerAPI.shared.fetchWatchProgress(contentId: contentId).position) ?? 0

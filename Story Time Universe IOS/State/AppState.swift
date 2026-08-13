@@ -22,6 +22,8 @@ final class AppState: ObservableObject {
     @Published var isBusy = false
     /// Shared main tab selection so Account can jump to Downloads, Home, etc.
     @Published var selectedMainTab: MainTab = .home
+    /// Bottom tab bar visibility (hide while scrolling down).
+    @Published var tabBarVisible = true
 
     /// Present subscription / PPV App Store paywall (never web checkout for digital goods).
     @Published var showPaywall = false
@@ -94,6 +96,7 @@ final class AppState: ObservableObject {
             self.session = session
             if session?.user != nil {
                 subscription = try? await ViewerAPI.shared.fetchSubscription()
+                await syncParentalHintsFromSettings()
             }
             await waitRemainingSplash(from: splashStarted, minimum: minimumSplash)
 
@@ -253,7 +256,21 @@ final class AppState: ObservableObject {
         activeProfile = profile
         APIClient.shared.setViewerProfileCookie(profile.id)
         route = .main
-        Task { await ViewerAPI.shared.reportSessionTelemetry() }
+        tabBarVisible = true
+        Task {
+            await ViewerAPI.shared.reportSessionTelemetry()
+            await syncParentalHintsFromSettings()
+        }
+    }
+
+    /// Pull maturity flags from viewer settings when the API exposes them. PIN stays on-device.
+    func syncParentalHintsFromSettings() async {
+        guard let settings = try? await ViewerAPI.shared.fetchViewerSettings() else { return }
+        let prefs = settings.preferences
+        ParentalControls.shared.applyRemoteMaturityHints(
+            enabled: prefs?.parentalControlsEnabled,
+            maxAge: prefs?.resolvedMaxMaturityAge
+        )
     }
 
     func switchProfile() {

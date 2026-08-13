@@ -8,8 +8,10 @@ struct DownloadButton: View {
 
     let spec: DownloadSpec
     var style: Style = .icon
+    var onBlocked: (() -> Void)? = nil
 
     @ObservedObject private var downloads = DownloadManager.shared
+    @ObservedObject private var parental = ParentalControls.shared
     @State private var confirmDelete = false
 
     private var record: DownloadRecord? { downloads.record(forKey: spec.key) }
@@ -109,6 +111,10 @@ struct DownloadButton: View {
         case .downloading, .queued:
             downloads.cancelDownload(key: spec.key)
         case .failed, .paused, .none:
+            if parental.blockDownloads {
+                onBlocked?()
+                return
+            }
             downloads.startDownload(spec)
         }
     }

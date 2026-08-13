@@ -4,6 +4,7 @@ struct PlaybackRequest: Identifiable {
     let id = UUID()
     let episodeId: String?
     let isTrailer: Bool
+    var forceRestart: Bool = false
 }
 
 struct ContentDetailView: View {
@@ -11,6 +12,7 @@ struct ContentDetailView: View {
     var seed: ContentItem?
 
     @EnvironmentObject private var appState: AppState
+    @ObservedObject private var parental = ParentalControls.shared
     @State private var detail: ContentDetail?
     @State private var crew: [CrewCredit] = []
     @State private var related: [ContentItem] = []
@@ -23,6 +25,10 @@ struct ContentDetailView: View {
     @State private var isResolvingAccess = false
     @State private var pendingPlayback: PlaybackRequest?
     @State private var showPPVPaywall = false
+    @State private var resumePositionSeconds = 0
+    @State private var showPlayPIN = false
+    @State private var pendingPINPlayback: PlaybackRequest?
+    @State private var downloadBlockedMessage: String?
 
     private var displayTitle: String {
         detail?.title ?? seed?.title ?? ""
@@ -60,9 +66,14 @@ struct ContentDetailView: View {
                     watchlistBusy: watchlistBusy,
                     downloadSpec: filmDownloadSpec,
                     playLabel: playButtonTitle,
-                    onPlay: { startPlayback(trailer: false, episodeId: firstEpisodeId) },
-                    onTrailer: { startPlayback(trailer: true, episodeId: nil) },
-                    onWatchlist: { Task { await toggleWatchlist() } }
+                    showStartFromBeginning: resumePositionSeconds > 5,
+                    onPlay: { startPlayback(trailer: false, episodeId: firstEpisodeId, forceRestart: false) },
+                    onStartFromBeginning: { startPlayback(trailer: false, episodeId: firstEpisodeId, forceRestart: true) },
+                    onTrailer: { startPlayback(trailer: true, episodeId: nil, forceRestart: false) },
+                    onWatchlist: { Task { await toggleWatchlist() } },
+                    onDownloadBlocked: {
+                        downloadBlockedMessage = "Downloads are blocked by parental controls on this device."
+                    }
                 )
 
                 DetailBodySections(
@@ -77,8 +88,8 @@ struct ContentDetailView: View {
                     crew: crew,
                     btsVideos: detail?.btsVideos ?? [],
                     errorMessage: errorMessage,
-                    onPlayTrailer: { startPlayback(trailer: true, episodeId: nil) },
-                    onPlayEpisode: { startPlayback(trailer: false, episodeId: $0) },
+                    onPlayTrailer: { startPlayback(trailer: true, episodeId: nil, forceRestart: false) },
+                    onPlayEpisode: { startPlayback(trailer: false, episodeId: $0, forceRestart: false) },
                     onSelectRelated: { selectedRelated = $0 },
                     onSelectPerson: { selectedPerson = $0 }
                 )
@@ -86,6 +97,7 @@ struct ContentDetailView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 40)
             }
+            .trackScrollForTabBar()
         }
         .background(Theme.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
@@ -102,7 +114,8 @@ struct ContentDetailView: View {
                 title: displayTitle,
                 episodeId: request.episodeId,
                 isTrailer: request.isTrailer,
-                episodes: request.isTrailer ? [] : episodePlaybackInfos
+                episodes: request.isTrailer ? [] : episodePlaybackInfos,
+                forceRestart: request.forceRestart
             )
             .environmentObject(appState)
         }
@@ -113,6 +126,31 @@ struct ContentDetailView: View {
                 Task { await handlePPVPurchaseFinished() }
             }
             .environmentObject(appState)
+        }
+        .sheet(isPresented: $showPlayPIN) {
+            ParentalPINSheet(
+                title: "Parental PIN",
+                message: "Enter your parental PIN to play this title.",
+                onCancel: {
+                    showPlayPIN = false
+                    pendingPINPlayback = nil
+                },
+                onSuccess: {
+                    showPlayPIN = false
+                    if let pending = pendingPINPlayback {
+                        pendingPINPlayback = nil
+                        Task { await resolvePlayback(pending) }
+                    }
+                }
+            )
+        }
+        .alert("Downloads blocked", isPresented: Binding(
+            get: { downloadBlockedMessage != nil },
+            set: { if !$0 { downloadBlockedMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { downloadBlockedMessage = nil }
+        } message: {
+            Text(downloadBlockedMessage ?? "")
         }
         .overlay {
             if isResolvingAccess {
@@ -190,44 +228,48 @@ struct ContentDetailView: View {
         detail?.seasons?.first?.episodes?.first?.id
     }
 
-    private func startPlayback(trailer: Bool, episodeId: String?) {
-        let request = PlaybackRequest(episodeId: episodeId, isTrailer: trailer)
-        // Trailers never require PPV unlock.
-        if trailer {
+    private func startPlayback(trailer: Bool, episodeId: String?, forceRestart: Bool) {
+        let request = PlaybackRequest(episodeId: episodeId, isTrailer: trailer, forceRestart: forceRestart)
+        if !trailer, ParentalPINGate.needsPinForPlayer {
+            pendingPINPlayback = request
+            showPlayPIN = true
+            return
+        }
+        Task { await resolvePlayback(request) }
+    }
+
+    private func resolvePlayback(_ request: PlaybackRequest) async {
+        if request.isTrailer {
             playbackRequest = request
             return
         }
-        // Already downloaded offline.
-        if DownloadManager.shared.offlineAsset(contentId: contentId, episodeId: episodeId) != nil {
+        if DownloadManager.shared.offlineAsset(contentId: contentId, episodeId: request.episodeId) != nil {
             playbackRequest = request
             return
         }
 
-        Task {
-            isResolvingAccess = true
-            defer { isResolvingAccess = false }
-            errorMessage = nil
+        isResolvingAccess = true
+        defer { isResolvingAccess = false }
+        errorMessage = nil
 
-            // Subscription refresh so PPV model flag is current.
-            if appState.subscription == nil {
-                await appState.refreshSubscriptionFromServer()
-            }
+        if appState.subscription == nil {
+            await appState.refreshSubscriptionFromServer()
+        }
 
-            let access = await ViewerAPI.shared.resolveTitleAccess(
-                contentId: contentId,
-                isPayPerViewAccount: appState.isPayPerViewAccount,
-                isTrailer: false
-            )
+        let access = await ViewerAPI.shared.resolveTitleAccess(
+            contentId: contentId,
+            isPayPerViewAccount: appState.isPayPerViewAccount,
+            isTrailer: false
+        )
 
-            switch access {
-            case .playable:
-                playbackRequest = request
-            case .requiresInAppPurchase:
-                pendingPlayback = request
-                showPPVPaywall = true
-            case .blocked(let message):
-                errorMessage = message
-            }
+        switch access {
+        case .playable:
+            playbackRequest = request
+        case .requiresInAppPurchase:
+            pendingPlayback = request
+            showPPVPaywall = true
+        case .blocked(let message):
+            errorMessage = message
         }
     }
 
@@ -260,7 +302,6 @@ struct ContentDetailView: View {
             let loaded = try await ViewerAPI.shared.fetchContentDetail(id: contentId)
             detail = loaded
 
-            // Warm main stream + trailer so Play is near-instant.
             Task { await PlaybackWarmCache.shared.warm(contentId: contentId) }
             if let firstEp = loaded.seasons?.first?.episodes?.first?.id {
                 Task { await PlaybackWarmCache.shared.warm(contentId: contentId, episodeId: firstEp) }
@@ -274,16 +315,18 @@ struct ContentDetailView: View {
                 limit: 12
             )
             async let listReq = ViewerAPI.shared.fetchWatchlist()
+            async let progressReq = ViewerAPI.shared.fetchWatchProgress(contentId: contentId)
 
             crew = (try? await crewReq) ?? []
-            related = ParentalControls.shared.filter(
+            related = parental.filter(
                 (try? await relatedReq) ?? [],
-                profileAge: nil
+                profileAge: appState.activeProfile?.age
             )
             ImagePrefetcher.prefetch([loaded.backdropCandidates])
             ImagePrefetcher.prefetchPosters(related)
             let list = try? await listReq
             inWatchlist = list?.contains(where: { $0.id == contentId }) ?? false
+            resumePositionSeconds = (try? await progressReq)?.position ?? 0
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -313,31 +356,36 @@ private struct DetailHeroView: View {
     let watchlistBusy: Bool
     let downloadSpec: DownloadSpec?
     let playLabel: String
+    let showStartFromBeginning: Bool
     let onPlay: () -> Void
+    let onStartFromBeginning: () -> Void
     let onTrailer: () -> Void
     let onWatchlist: () -> Void
+    let onDownloadBlocked: () -> Void
+
+    private let heroHeight: CGFloat = min(UIScreen.main.bounds.height * 0.58, 520)
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             RemoteImage(urls: imageURLs)
-                .frame(maxWidth: .infinity)
-                .frame(height: 460)
+                .frame(width: UIScreen.main.bounds.width, height: heroHeight)
+                .clipped()
 
             LinearGradient(
-                colors: [.black.opacity(0.35), .clear, .clear],
+                colors: [.black.opacity(0.4), .clear, .clear],
                 startPoint: .top,
                 endPoint: .center
             )
 
             LinearGradient(
-                colors: [.clear, .black.opacity(0.4), .black.opacity(0.96)],
+                colors: [.clear, .black.opacity(0.45), .black.opacity(0.97)],
                 startPoint: .center,
                 endPoint: .bottom
             )
 
             VStack(alignment: .leading, spacing: 12) {
                 Text(title)
-                    .font(.system(size: 36, weight: .heavy))
+                    .font(.system(size: 34, weight: .heavy))
                     .foregroundStyle(.white)
                     .lineLimit(3)
                     .minimumScaleFactor(0.75)
@@ -352,12 +400,22 @@ private struct DetailHeroView: View {
                 ratingRow
                 actionRow
 
-                if let downloadSpec {
-                    DownloadButton(spec: downloadSpec, style: .labeled)
+                if showStartFromBeginning {
+                    Button(action: onStartFromBeginning) {
+                        Text("Start from Beginning")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.92))
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(width: UIScreen.main.bounds.width, height: heroHeight)
+        .clipped()
     }
 
     @ViewBuilder
@@ -377,27 +435,19 @@ private struct DetailHeroView: View {
     }
 
     private var actionRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             Button(action: onPlay) {
                 Label(playLabel, systemImage: "play.fill")
                     .font(.headline)
                     .foregroundStyle(.black)
-                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 28)
                     .padding(.vertical, 14)
                     .background(Color.white)
                     .clipShape(Capsule())
             }
 
             if hasTrailer {
-                Button(action: onTrailer) {
-                    Image(systemName: "film")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 48, height: 48)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Circle())
-                }
-                .accessibilityLabel("Play trailer")
+                circularAction(systemImage: "film", label: "Play trailer", action: onTrailer)
             }
 
             Button(action: onWatchlist) {
@@ -405,12 +455,41 @@ private struct DetailHeroView: View {
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.white)
                     .frame(width: 48, height: 48)
+                    .background(Color.black.opacity(0.45))
                     .background(.ultraThinMaterial)
                     .clipShape(Circle())
             }
             .disabled(watchlistBusy)
             .accessibilityLabel(inWatchlist ? "In My List" : "Add to My List")
+
+            if let downloadSpec {
+                circularDownload(spec: downloadSpec)
+            }
+
+            Spacer(minLength: 0)
         }
+    }
+
+    private func circularAction(systemImage: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 48, height: 48)
+                .background(Color.black.opacity(0.45))
+                .background(.ultraThinMaterial)
+                .clipShape(Circle())
+        }
+        .accessibilityLabel(label)
+    }
+
+    @ViewBuilder
+    private func circularDownload(spec: DownloadSpec) -> some View {
+        DownloadButton(spec: spec, style: .icon, onBlocked: onDownloadBlocked)
+            .frame(width: 48, height: 48)
+            .background(Color.black.opacity(0.45))
+            .background(.ultraThinMaterial)
+            .clipShape(Circle())
     }
 }
 

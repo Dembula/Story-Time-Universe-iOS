@@ -29,8 +29,15 @@ struct MainTabView: View {
                 .tabItem { Label("Account", systemImage: "person.crop.circle") }
                 .tag(MainTab.account)
         }
+        .toolbar(appState.tabBarVisible ? .visible : .hidden, for: .tabBar)
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .tint(Theme.accent)
+        .animation(.easeInOut(duration: 0.22), value: appState.tabBarVisible)
+        .onChange(of: appState.selectedMainTab) { _, _ in
+            withAnimation(.easeInOut(duration: 0.2)) {
+                appState.tabBarVisible = true
+            }
+        }
     }
 }

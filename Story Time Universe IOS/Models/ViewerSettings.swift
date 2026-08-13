@@ -49,6 +49,14 @@ struct ViewerAddressDetails: Codable, Hashable {
 struct ViewerPreferenceDetails: Codable, Hashable {
     let notifyEmail: Bool?
     let playbackQuality: String?
+    /// Optional parental maturity hints from web settings (PIN remains device-local).
+    let parentalControlsEnabled: Bool?
+    let maxMaturityAge: Int?
+    let parentalMaxAge: Int?
+
+    var resolvedMaxMaturityAge: Int? {
+        maxMaturityAge ?? parentalMaxAge
+    }
 }
 
 struct ViewerPaymentMethodDetails: Codable, Hashable, Identifiable {

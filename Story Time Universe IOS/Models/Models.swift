@@ -447,6 +447,24 @@ struct SearchResult: Codable, Identifiable, Hashable {
     }
 }
 
+struct AISearchPayload: Codable {
+    let results: [SearchResult]?
+    let items: [SearchResult]?
+    let reasoning: String?
+    let explanation: String?
+    let suggestions: [String]?
+
+    var resolvedResults: [SearchResult] { results ?? items ?? [] }
+    var resolvedReasoning: String? { reasoning ?? explanation }
+}
+
+struct AISearchResult: Hashable {
+    let results: [SearchResult]
+    let reasoning: String?
+    let suggestions: [String]
+    let usedFallback: Bool
+}
+
 struct ViewerSubscription: Codable, Hashable {
     let id: String?
     let plan: String?

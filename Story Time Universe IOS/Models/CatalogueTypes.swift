@@ -145,6 +145,75 @@ enum CatalogueTypes {
         guard let type else { return false }
         return longFormTypes.contains(type.uppercased())
     }
+
+    /// Seeded genre labels for the Netflix-style category picker.
+    static let seedGenres: [String] = [
+        "Action & Adventure",
+        "Animation",
+        "Comedy",
+        "Crime",
+        "Drama",
+        "Documentary",
+        "Feel-Good",
+        "Horror",
+        "Romance",
+        "Sci-Fi",
+        "Sports",
+        "Thriller",
+    ]
+
+    /// Media-type entries shown at the top of the Home category overlay.
+    static var browseTypeOptions: [(id: String, title: String, typeValues: [String])] {
+        [
+            ("ALL", "Home", []),
+            ("MOVIE", "Movies", ["MOVIE"]),
+            ("SERIES", "Series", ["SERIES"]),
+            ("SHOW", "Shows", ["SHOW"]),
+            ("DOCUMENTARY", "Documentaries", ["DOCUMENTARY"]),
+            ("ANIMATION", "Animation", ["ANIMATION"]),
+            ("SPORTS", "Sports", ["SPORTS"]),
+            ("COMEDY", "Comedy", ["COMEDY_SKIT", "STAND_UP"]),
+            ("SHORT_FILM", "Short Films", ["SHORT_FILM"]),
+            ("PODCAST", "Podcasts", ["PODCAST"]),
+            ("MUSIC_VIDEO", "Music Videos", ["MUSIC_VIDEO"]),
+            ("LIVE_EVENT", "Live Events", ["LIVE_EVENT"]),
+            ("REALITY", "Reality", ["REALITY"]),
+            ("WEB_SERIES", "Web Series", ["WEB_SERIES"]),
+        ]
+    }
+}
+
+/// Home chrome filter: all catalogue, a content type, or a genre across types.
+enum HomeBrowseFilter: Equatable, Hashable {
+    case all
+    case contentType(id: String, title: String, typeValues: [String])
+    case genre(String)
+
+    var chromeTitle: String {
+        switch self {
+        case .all: return "Home"
+        case .contentType(_, let title, _): return title
+        case .genre(let name): return name
+        }
+    }
+}
+
+struct CatalogueListRequest: Identifiable, Hashable {
+    let id: String
+    let title: String
+    var typeValues: [String] = []
+    var categoryFilter: String? = nil
+    var genre: String? = nil
+    var seedItems: [ContentItem] = []
+    var continueWatching: [ContinueWatchingItem] = []
+
+    static func == (lhs: CatalogueListRequest, rhs: CatalogueListRequest) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
 }
 
 struct HomeCatalogRow: Identifiable, Hashable {
@@ -153,8 +222,14 @@ struct HomeCatalogRow: Identifiable, Hashable {
     let title: String
     let items: [ContentItem]
     let reserveEmptySlot: Bool
+    var typeValues: [String] = []
+    var categoryFilter: String? = nil
 
     var shouldDisplay: Bool {
         !items.isEmpty
+    }
+
+    var resolvedTypeValues: [String] {
+        typeValues.isEmpty ? [typeValue] : typeValues
     }
 }

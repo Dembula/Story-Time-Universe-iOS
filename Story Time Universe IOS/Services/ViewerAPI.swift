@@ -438,6 +438,101 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
         return try api.decode(SearchResponse.self, from: data).results
     }
 
+    /// Production AI search with path fallbacks; keyword search if all routes 404.
+    func aiSearch(query: String, limit: Int = 24) async throws -> AISearchResult {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard q.count >= 2 else {
+            return AISearchResult(results: [], reasoning: nil, suggestions: [], usedFallback: false)
+        }
+
+        let paths = [
+            "api/viewer/ai/search",
+            "api/browse/ai/search",
+            "api/ai/viewer/search",
+        ]
+        let body: [String: Any] = ["query": q, "limit": limit]
+        var sawNon404 = false
+
+        for path in paths {
+            do {
+                let (data, response) = try await api.request(path: path, method: "POST", jsonBody: body)
+                if response.statusCode == 404 { continue }
+                sawNon404 = true
+                guard (200...299).contains(response.statusCode) else { continue }
+                if let payload = try? api.decode(AISearchPayload.self, from: data) {
+                    let results = payload.resolvedResults
+                    if !results.isEmpty || payload.resolvedReasoning != nil {
+                        return AISearchResult(
+                            results: results,
+                            reasoning: payload.resolvedReasoning,
+                            suggestions: payload.suggestions ?? [],
+                            usedFallback: false
+                        )
+                    }
+                }
+                if let search = try? api.decode(SearchResponse.self, from: data), !search.results.isEmpty {
+                    return AISearchResult(
+                        results: search.results,
+                        reasoning: nil,
+                        suggestions: [],
+                        usedFallback: false
+                    )
+                }
+            } catch {
+                continue
+            }
+        }
+
+        // Enhanced keyword fallback when AI routes are missing or empty.
+        let keyword = try await search(query: q)
+        let ranked = Self.rankSearchResults(keyword, query: q)
+        return AISearchResult(
+            results: ranked,
+            reasoning: sawNon404
+                ? "AI search didn’t return matches — showing keyword results instead."
+                : "AI search isn’t available yet — showing the best keyword matches for your vibe.",
+            suggestions: Self.vibeSuggestions(from: q),
+            usedFallback: true
+        )
+    }
+
+    private static func rankSearchResults(_ results: [SearchResult], query: String) -> [SearchResult] {
+        let tokens = query.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+        guard !tokens.isEmpty else { return results }
+        return results.sorted { a, b in
+            score(a, tokens: tokens) > score(b, tokens: tokens)
+        }
+    }
+
+    private static func score(_ result: SearchResult, tokens: [String]) -> Int {
+        let hay = [
+            result.title,
+            result.category,
+            result.type,
+            result.creatorName,
+        ]
+        .compactMap { $0?.lowercased() }
+        .joined(separator: " ")
+        return tokens.reduce(0) { partial, token in
+            partial + (hay.contains(token) ? 2 : 0) + (hay.hasPrefix(token) ? 1 : 0)
+        }
+    }
+
+    private static func vibeSuggestions(from query: String) -> [String] {
+        let base = [
+            "feel-good movies",
+            "short thrillers",
+            "family comedy",
+            "late-night vibes",
+            "documentary picks",
+        ]
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return Array(base.prefix(4)) }
+        return Array(([q] + base.filter { !$0.localizedCaseInsensitiveContains(q) }).prefix(5))
+    }
+
     func fetchWatchlist() async throws -> [ContentItem] {
         let (data, response) = try await api.request(path: "api/watchlist")
         guard response.statusCode == 200 else { throw api.parseAPIError(data: data, status: response.statusCode) }

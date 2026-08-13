@@ -174,19 +174,28 @@ struct ContentRowView: View {
     let items: [ContentItem]
     var showEmptyPlaceholder: Bool = false
     var onSelect: (ContentItem) -> Void
+    var onSeeAll: (() -> Void)? = nil
 
     var body: some View {
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 4) {
-                    Text(title)
-                        .font(.title3.bold())
-                        .foregroundStyle(Theme.foreground)
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Theme.muted)
+                Button {
+                    onSeeAll?()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(title)
+                            .font(.title3.bold())
+                            .foregroundStyle(Theme.foreground)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Theme.muted)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 20)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 20)
+                .buttonStyle(.plain)
+                .disabled(onSeeAll == nil)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
@@ -236,18 +245,27 @@ struct ContentRowView: View {
 struct ContinueWatchingRow: View {
     let items: [ContinueWatchingItem]
     var onSelect: (ContinueWatchingItem) -> Void
+    var onSeeAll: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 4) {
-                Text("Continue Watching")
-                    .font(.title3.bold())
-                    .foregroundStyle(Theme.foreground)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Theme.muted)
+            Button {
+                onSeeAll?()
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Continue Watching")
+                        .font(.title3.bold())
+                        .foregroundStyle(Theme.foreground)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Theme.muted)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 20)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 20)
+            .buttonStyle(.plain)
+            .disabled(onSeeAll == nil)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {

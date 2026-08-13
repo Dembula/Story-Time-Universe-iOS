@@ -9,6 +9,7 @@ struct AccountView: View {
     @State private var showAgeAssurance = false
     @State private var showAccountInfo = false
     @State private var showPlaybackHelp = false
+    @State private var showSubscriptionInfo = false
 
     private struct WebDestination: Identifiable {
         let id = UUID()
@@ -34,7 +35,7 @@ struct AccountView: View {
 
                     settingsGroup(title: nil) {
                         settingsRow(title: "Subscription", subtitle: subscriptionSubtitle, systemImage: "rectangle.stack.fill") {
-                            appState.presentPaywall(.changePlan)
+                            showSubscriptionInfo = true
                         }
                         if appState.needsPaymentAttention {
                             settingsRow(title: "Reactivate access", subtitle: "Subscribe again with Apple", systemImage: "exclamationmark.circle") {
@@ -116,6 +117,7 @@ struct AccountView: View {
                 }
                 .padding(20)
                 .padding(.bottom, 40)
+                .trackScrollForTabBar()
             }
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Account")
@@ -135,6 +137,10 @@ struct AccountView: View {
             }
             .sheet(isPresented: $showParental) {
                 ParentalControlsView()
+            }
+            .sheet(isPresented: $showSubscriptionInfo) {
+                SubscriptionInfoView()
+                    .environmentObject(appState)
             }
             .sheet(isPresented: $showDelete) {
                 DeleteAccountView()
@@ -337,6 +343,9 @@ struct ParentalControlsView: View {
 
                     Section("PIN") {
                         if parental.hasPIN {
+                            Text("PIN is active on this device")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
                             SecureField("New PIN (optional)", text: $newPIN)
                                 .keyboardType(.numberPad)
                             SecureField("Confirm new PIN", text: $confirmPIN)
@@ -362,6 +371,9 @@ struct ParentalControlsView: View {
                                 confirmPIN = ""
                             }
                         }
+                        Text("PIN is stored on this device only. Maturity limits may sync from your account settings when available; the PIN does not sync from the website.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
 
                     Section("Age Assurance") {
@@ -503,7 +515,7 @@ struct AgeAssuranceView: View {
                         Text(parental.isEnabled ? "Enabled · \(parental.maturityLabel)" : "Off — only the profile age limit applies")
                             .font(.body.weight(.semibold))
                             .foregroundStyle(Theme.foreground)
-                        Text("Titles rated above the allowed age are hidden from Home, Search, and related rows while parental controls are on.")
+                        Text("Titles rated above the allowed age are hidden from Home, Search, See All, My List, and related rows while parental controls are on.")
                             .font(.footnote)
                             .foregroundStyle(Theme.muted)
                     }

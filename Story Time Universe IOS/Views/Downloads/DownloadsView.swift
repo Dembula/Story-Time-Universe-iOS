@@ -4,6 +4,8 @@ struct DownloadsView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var downloads = DownloadManager.shared
     @State private var playback: DownloadPlayback?
+    @State private var showPlayPIN = false
+    @State private var pendingPlayback: DownloadPlayback?
 
     private var completed: [DownloadRecord] { downloads.completedRecords }
     private var active: [DownloadRecord] { downloads.activeRecords }
@@ -41,6 +43,7 @@ struct DownloadsView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .trackScrollForTabBar()
                 }
             }
             .background(Theme.background.ignoresSafeArea())
@@ -56,6 +59,21 @@ struct DownloadsView: View {
                 episodes: item.episodes
             )
             .environmentObject(appState)
+        }
+        .sheet(isPresented: $showPlayPIN) {
+            ParentalPINSheet(
+                title: "Parental PIN",
+                message: "Enter your parental PIN to play this download.",
+                onCancel: {
+                    showPlayPIN = false
+                    pendingPlayback = nil
+                },
+                onSuccess: {
+                    showPlayPIN = false
+                    playback = pendingPlayback
+                    pendingPlayback = nil
+                }
+            )
         }
     }
 
@@ -78,12 +96,18 @@ struct DownloadsView: View {
 
     private func play(_ record: DownloadRecord) {
         let episodes = queue(forSeries: record.contentId)
-        playback = DownloadPlayback(
+        let request = DownloadPlayback(
             contentId: record.contentId,
             episodeId: record.episodeId,
             title: record.title,
             episodes: record.episodeId == nil ? [] : episodes
         )
+        if ParentalPINGate.needsPinForPlayer {
+            pendingPlayback = request
+            showPlayPIN = true
+            return
+        }
+        playback = request
     }
 
     /// Only offline (downloaded) episodes form the in-player queue.

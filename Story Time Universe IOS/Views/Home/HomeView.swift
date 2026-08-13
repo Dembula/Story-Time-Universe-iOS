@@ -3,14 +3,19 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var parental = ParentalControls.shared
+    @State private var browseFilter: HomeBrowseFilter = .all
+    @State private var showCategoryPicker = false
+    @State private var catalogueRequest: CatalogueListRequest?
     @State private var featured: [ContentItem] = []
     @State private var continueWatching: [ContinueWatchingItem] = []
     @State private var trending: [ContentItem] = []
     @State private var catalogRows: [HomeCatalogRow] = []
+    @State private var discoveredGenres: [String] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var selectedContent: ContentItem?
     @State private var playingContent: ContentItem?
+    @State private var forceRestartPlay = false
     @State private var heroIndex = 0
     @State private var isLoadInFlight = false
     @State private var queuedForceReload = false
@@ -20,11 +25,27 @@ struct HomeView: View {
     @State private var ppvFinishInFlight = false
     @State private var showPPVPaywall = false
     @State private var ppvTitle: String?
+    @State private var showSwitchPIN = false
+    @State private var showPlayPIN = false
+    @State private var pendingPlayAfterPIN: ContentItem?
 
     private var profileAge: Int? { appState.activeProfile?.age }
 
     private func requestPlay(_ item: ContentItem) {
+        if ParentalPINGate.needsPinForPlayer {
+            pendingPlayAfterPIN = item
+            showPlayPIN = true
+            return
+        }
         Task { await resolveAndPlay(item) }
+    }
+
+    private func requestSwitchProfile() {
+        if ParentalPINGate.needsPinToSwitchProfile {
+            showSwitchPIN = true
+            return
+        }
+        appState.switchProfile()
     }
 
     private func resolveAndPlay(_ item: ContentItem) async {
@@ -89,7 +110,6 @@ struct HomeView: View {
             ZStack(alignment: .top) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        // Full-bleed hero (goes under status bar)
                         Group {
                             if isLoading {
                                 Color.black
@@ -111,18 +131,48 @@ struct HomeView: View {
                         VStack(alignment: .leading, spacing: 28) {
                             if !isLoading {
                                 if !continueWatching.isEmpty {
-                                    ContinueWatchingRow(items: continueWatching) { item in
-                                        requestPlay(item.asContentItem)
-                                    }
+                                    ContinueWatchingRow(
+                                        items: continueWatching,
+                                        onSelect: { requestPlay($0.asContentItem) },
+                                        onSeeAll: {
+                                            catalogueRequest = CatalogueListRequest(
+                                                id: "continue",
+                                                title: "Continue Watching",
+                                                continueWatching: continueWatching
+                                            )
+                                        }
+                                    )
                                 }
 
-                                ContentRowView(title: "Trending Now", items: trending) { selectedContent = $0 }
+                                ContentRowView(
+                                    title: "Trending Now",
+                                    items: trending,
+                                    onSelect: { selectedContent = $0 },
+                                    onSeeAll: {
+                                        catalogueRequest = CatalogueListRequest(
+                                            id: "trending-\(browseFilter.chromeTitle)",
+                                            title: "Trending Now",
+                                            typeValues: activeTypeValues,
+                                            seedItems: trending
+                                        )
+                                    }
+                                )
 
                                 ForEach(catalogRows.filter(\.shouldDisplay)) { row in
                                     ContentRowView(
                                         title: row.title,
-                                        items: row.items
-                                    ) { selectedContent = $0 }
+                                        items: row.items,
+                                        onSelect: { selectedContent = $0 },
+                                        onSeeAll: {
+                                            catalogueRequest = CatalogueListRequest(
+                                                id: row.id,
+                                                title: row.title,
+                                                typeValues: row.resolvedTypeValues,
+                                                categoryFilter: row.categoryFilter,
+                                                seedItems: row.items
+                                            )
+                                        }
+                                    )
                                 }
                             }
 
@@ -136,11 +186,22 @@ struct HomeView: View {
                         .padding(.top, 22)
                         .padding(.bottom, 40)
                     }
+                    .trackScrollForTabBar()
                 }
                 .ignoresSafeArea(edges: .top)
 
-                // Home + profile sit BELOW the Dynamic Island / status bar safe area
                 homeChrome
+
+                if showCategoryPicker {
+                    HomeCategoryPickerOverlay(
+                        filter: browseFilter,
+                        discoveredGenres: discoveredGenres,
+                        onSelect: { applyBrowseFilter($0) },
+                        onClose: { showCategoryPicker = false }
+                    )
+                    .transition(.opacity)
+                    .zIndex(20)
+                }
             }
             .background(Theme.background.ignoresSafeArea())
             .navigationBarHidden(true)
@@ -148,9 +209,17 @@ struct HomeView: View {
             .navigationDestination(item: $selectedContent) { item in
                 ContentDetailView(contentId: item.id, seed: item)
             }
+            .navigationDestination(item: $catalogueRequest) { request in
+                CatalogueListView(request: request)
+            }
             .fullScreenCover(item: $playingContent) { item in
-                PlayerContainerView(contentId: item.id, title: item.title)
-                    .environmentObject(appState)
+                PlayerContainerView(
+                    contentId: item.id,
+                    title: item.title,
+                    forceRestart: forceRestartPlay
+                )
+                .environmentObject(appState)
+                .onDisappear { forceRestartPlay = false }
             }
             .sheet(isPresented: $showPPVPaywall) {
                 if let item = pendingPlayItem {
@@ -161,6 +230,34 @@ struct HomeView: View {
                     }
                     .environmentObject(appState)
                 }
+            }
+            .sheet(isPresented: $showSwitchPIN) {
+                ParentalPINSheet(
+                    title: "Parental PIN",
+                    message: "Enter your parental PIN to switch profiles.",
+                    onCancel: { showSwitchPIN = false },
+                    onSuccess: {
+                        showSwitchPIN = false
+                        appState.switchProfile()
+                    }
+                )
+            }
+            .sheet(isPresented: $showPlayPIN) {
+                ParentalPINSheet(
+                    title: "Parental PIN",
+                    message: "Enter your parental PIN to play this title.",
+                    onCancel: {
+                        showPlayPIN = false
+                        pendingPlayAfterPIN = nil
+                    },
+                    onSuccess: {
+                        showPlayPIN = false
+                        if let item = pendingPlayAfterPIN {
+                            pendingPlayAfterPIN = nil
+                            Task { await resolveAndPlay(item) }
+                        }
+                    }
+                )
             }
             .overlay {
                 if isResolvingAccess {
@@ -182,18 +279,42 @@ struct HomeView: View {
                 Text(accessError ?? "")
             }
             .task { await load(force: false) }
+            .onChange(of: browseFilter) { _, _ in
+                Task { await load(force: true) }
+            }
         }
+    }
+
+    private var activeTypeValues: [String] {
+        if case .contentType(_, _, let values) = browseFilter {
+            return values
+        }
+        return []
     }
 
     private var homeChrome: some View {
         HStack {
-            Text("Home")
-                .font(.largeTitle.bold())
-                .foregroundStyle(.white)
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showCategoryPicker = true
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(browseFilter.chromeTitle)
+                        .font(.largeTitle.bold())
+                        .foregroundStyle(.white)
+                    Image(systemName: "chevron.down")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.9))
+                }
                 .shadow(color: .black.opacity(0.55), radius: 8, y: 2)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Browse categories")
+
             Spacer()
             Button {
-                appState.switchProfile()
+                requestSwitchProfile()
             } label: {
                 ZStack {
                     Circle()
@@ -220,7 +341,19 @@ struct HomeView: View {
             .ignoresSafeArea(edges: .top)
             .allowsHitTesting(false)
         )
-        // Overlay is laid out inside the safe area unless we ignore it — keep default safe area.
+    }
+
+    private func applyBrowseFilter(_ filter: HomeBrowseFilter) {
+        showCategoryPicker = false
+        if case .genre(let name) = filter {
+            catalogueRequest = CatalogueListRequest(
+                id: "genre-\(name.lowercased())",
+                title: name,
+                genre: name
+            )
+            return
+        }
+        browseFilter = filter
     }
 
     private func applyFilters(_ items: [ContentItem]) -> [ContentItem] {
@@ -252,32 +385,67 @@ struct HomeView: View {
             }
         }
 
-        async let featuredReq = ViewerAPI.shared.fetchContent(featured: true, limit: 8)
-        async let trendingReq = ViewerAPI.shared.fetchContent(limit: 24)
+        let typeFilter: String? = {
+            if case .contentType(_, _, let values) = browseFilter, values.count == 1 {
+                return values[0]
+            }
+            return nil
+        }()
+
+        async let featuredReq = ViewerAPI.shared.fetchContent(type: typeFilter, featured: true, limit: 8)
+        async let trendingReq = ViewerAPI.shared.fetchContent(type: typeFilter, limit: 24)
         async let continueReq = ViewerAPI.shared.fetchContinueWatching()
 
         let typeResults = await fetchAllTypeRows()
 
-        let f = applyFilters((try? await featuredReq) ?? [])
-        let t = applyFilters((try? await trendingReq) ?? [])
-        let cw = (try? await continueReq) ?? []
-        let rows = typeResults.map { row in
+        var f = applyFilters((try? await featuredReq) ?? [])
+        var t = applyFilters((try? await trendingReq) ?? [])
+        var cw = (try? await continueReq) ?? []
+
+        if case .contentType(_, _, let values) = browseFilter, !values.isEmpty {
+            let allowed = Set(values.map { $0.uppercased() })
+            f = f.filter { allowed.contains(($0.type ?? "").uppercased()) }
+            t = t.filter { allowed.contains(($0.type ?? "").uppercased()) }
+            cw = cw.filter { allowed.contains(($0.type ?? "").uppercased()) }
+            // Multi-type filters (e.g. Comedy) may need a wider pull.
+            if f.isEmpty || t.isEmpty {
+                let broad = applyFilters((try? await ViewerAPI.shared.fetchContent(limit: 40)) ?? [])
+                let typed = broad.filter { allowed.contains(($0.type ?? "").uppercased()) }
+                if f.isEmpty { f = Array(typed.prefix(8)) }
+                if t.isEmpty { t = Array(typed.prefix(24)) }
+            }
+        }
+
+        var rows = typeResults.map { row in
             HomeCatalogRow(
                 id: row.id,
                 typeValue: row.typeValue,
                 title: row.title,
                 items: applyFilters(row.items),
-                reserveEmptySlot: row.reserveEmptySlot
+                reserveEmptySlot: row.reserveEmptySlot,
+                typeValues: row.typeValues.isEmpty ? [row.typeValue] : row.typeValues,
+                categoryFilter: row.categoryFilter
             )
         }
-        let discoveredRows = mergeDiscoveredTypes(knownRows: rows, sample: t + f)
-        let hasFreshData = !f.isEmpty || !t.isEmpty || discoveredRows.contains(where: { !$0.items.isEmpty })
+
+        if case .contentType(_, _, let values) = browseFilter, !values.isEmpty {
+            let allowed = Set(values.map { $0.uppercased() })
+            rows = rows.filter { row in
+                row.resolvedTypeValues.contains { allowed.contains($0.uppercased()) }
+            }
+        } else {
+            rows = mergeDiscoveredTypes(knownRows: rows, sample: t + f)
+        }
+
+        refreshDiscoveredGenres(from: t + f + rows.flatMap(\.items))
+
+        let hasFreshData = !f.isEmpty || !t.isEmpty || rows.contains(where: { !$0.items.isEmpty })
 
         if hasFreshData || (featured.isEmpty && trending.isEmpty && catalogRows.isEmpty) {
             featured = f.isEmpty ? Array(t.prefix(5)) : f
             trending = t
             continueWatching = cw
-            catalogRows = discoveredRows
+            catalogRows = rows
         } else if !cw.isEmpty {
             continueWatching = cw
         }
@@ -289,7 +457,6 @@ struct HomeView: View {
             catalogRows: catalogRows
         )
 
-        // Warm first few playable titles for seamless play.
         let warmIds = (featured + trending).prefix(6).map(\.id)
         await PlaybackWarmCache.shared.warmMany(contentIds: Array(warmIds))
 
@@ -300,9 +467,36 @@ struct HomeView: View {
         }
     }
 
+    private func refreshDiscoveredGenres(from items: [ContentItem]) {
+        var seen = Set(discoveredGenres.map { $0.lowercased() })
+        var extra: [String] = []
+        for item in items {
+            if let category = item.category?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !category.isEmpty,
+               seen.insert(category.lowercased()).inserted {
+                extra.append(category)
+            }
+        }
+        if !extra.isEmpty {
+            discoveredGenres = (discoveredGenres + extra).sorted {
+                $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+            }
+        }
+    }
+
     private func fetchAllTypeRows() async -> [HomeCatalogRow] {
-        await withTaskGroup(of: (Int, HomeCatalogRow).self) { group in
-            for (index, def) in CatalogueTypes.allHomeRows.enumerated() {
+        let defs: [CatalogueTypes.RowDefinition] = {
+            if case .contentType(_, _, let values) = browseFilter, !values.isEmpty {
+                let allowed = Set(values.map { $0.uppercased() })
+                return CatalogueTypes.allHomeRows.filter {
+                    $0.typeValues.contains { allowed.contains($0.uppercased()) }
+                }
+            }
+            return CatalogueTypes.allHomeRows
+        }()
+
+        return await withTaskGroup(of: (Int, HomeCatalogRow).self) { group in
+            for (index, def) in defs.enumerated() {
                 group.addTask {
                     let items = await ViewerAPI.shared.fetchCatalogRow(definition: def, limit: 16)
                     let row = HomeCatalogRow(
@@ -310,7 +504,9 @@ struct HomeView: View {
                         typeValue: def.typeValues.first ?? def.id,
                         title: def.title,
                         items: items,
-                        reserveEmptySlot: def.reserveEmptySlot
+                        reserveEmptySlot: def.reserveEmptySlot,
+                        typeValues: def.typeValues,
+                        categoryFilter: def.categoryFilter
                     )
                     return (index, row)
                 }
@@ -343,7 +539,8 @@ struct HomeView: View {
                     typeValue: typeValue,
                     title: CatalogueTypes.pluralTitle(for: typeValue),
                     items: Array(items.prefix(16)),
-                    reserveEmptySlot: false
+                    reserveEmptySlot: false,
+                    typeValues: [typeValue]
                 )
             )
         }
