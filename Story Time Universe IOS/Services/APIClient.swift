@@ -104,6 +104,14 @@ final class APIClient {
             request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
         }
 
+        // Explicit profile header so watch sessions attribute correctly even if cookie bridging flakes.
+        if let profileId = cookieStorage.cookies?
+            .first(where: { $0.name == AppConfig.viewerProfileCookieName })?
+            .value,
+           !profileId.isEmpty {
+            request.setValue(profileId, forHTTPHeaderField: "X-ST-Viewer-Profile")
+        }
+
         if let jsonBody {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: jsonBody)

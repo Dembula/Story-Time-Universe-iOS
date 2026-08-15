@@ -919,6 +919,8 @@ final class PlayerViewModel: ObservableObject {
     private var timeControlObserver: NSKeyValueObservation?
     private var watchedSeconds: Double = 0
     private var lastSavedPosition: Double = 0
+    /// Last playback position already reported to `POST /api/watch` (creator view counts).
+    private var lastReportedWatchSeconds: Double = 0
     private var suppressProgressNetwork = false
 
     func start(contentId: String, episodeId: String?, trailer: Bool = false, forceRestart: Bool = false) async {
@@ -935,6 +937,7 @@ final class PlayerViewModel: ObservableObject {
         didReachEnd = false
         watchedSeconds = 0
         lastSavedPosition = 0
+        lastReportedWatchSeconds = 0
         defer {
             if generation == startGeneration {
                 isLoading = false
@@ -1175,16 +1178,24 @@ final class PlayerViewModel: ObservableObject {
 
         let cid = contentId
         let watched = watchedSeconds
+        let previouslyReported = lastReportedWatchSeconds
+        // Match web: POST /api/watch every ~30s of playback so creator dashboards count views.
+        let delta = max(0, watched - previouslyReported)
+        let shouldReportView = delta >= 30 || (final && delta >= 5)
+        if shouldReportView {
+            lastReportedWatchSeconds = watched
+        }
+
         Task {
             await ViewerAPI.shared.saveWatchProgress(
                 contentId: cid,
                 positionSeconds: position,
                 durationSeconds: dur
             )
-            if final, watched > 5 {
+            if shouldReportView {
                 await ViewerAPI.shared.recordWatchSession(
                     contentId: cid,
-                    durationSeconds: watched
+                    durationSeconds: delta
                 )
             }
         }
