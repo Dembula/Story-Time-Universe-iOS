@@ -39,5 +39,14 @@ struct MainTabView: View {
                 appState.tabBarVisible = true
             }
         }
+        .sheet(isPresented: $appState.showPaywall) {
+            SubscriptionPaywallView(
+                context: appState.paywallContext,
+                onFinished: {
+                    appState.showPaywall = false
+                }
+            )
+            .environmentObject(appState)
+        }
     }
 }
