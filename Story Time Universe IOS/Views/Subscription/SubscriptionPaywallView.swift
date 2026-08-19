@@ -39,7 +39,7 @@ struct SubscriptionPaywallView: View {
                             currentPlanBadge(currentProductID)
                         }
 
-                        if context != .ppv, !store.subscriptionProducts.isEmpty {
+                        if !context.isPPV, !store.subscriptionProducts.isEmpty {
                             billingToggle
                         }
 

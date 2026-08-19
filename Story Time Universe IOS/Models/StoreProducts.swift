@@ -80,4 +80,9 @@ enum PaywallContext: Equatable {
     case reactivate
     case changePlan
     case ppv(contentId: String, title: String?)
+
+    var isPPV: Bool {
+        if case .ppv = self { return true }
+        return false
+    }
 }
