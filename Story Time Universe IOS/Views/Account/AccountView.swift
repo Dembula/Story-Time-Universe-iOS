@@ -299,98 +299,35 @@ struct ParentalControlsView: View {
     @State private var unlocked = false
     @State private var newPIN = ""
     @State private var confirmPIN = ""
+    @State private var pinError: String?
+    @State private var pinSuccess: String?
 
     var body: some View {
         NavigationStack {
-            Form {
-                if parental.hasPIN && !unlocked {
-                    Section("Enter PIN to manage") {
-                        SecureField("4-digit PIN", text: $pinInput)
-                            .keyboardType(.numberPad)
-                        if let unlockError {
-                            Text(unlockError).foregroundStyle(.red)
+            ScrollView {
+                VStack(spacing: 20) {
+                    if parental.hasPIN && !unlocked {
+                        lockGate
+                    } else {
+                        enableSection
+                        if parental.isEnabled {
+                            maturitySection
+                            restrictionsSection
                         }
-                        Button("Unlock") {
-                            if parental.verifyPIN(pinInput) {
-                                unlocked = true
-                                unlockError = nil
-                            } else {
-                                unlockError = "Incorrect PIN."
-                            }
-                        }
-                    }
-                } else {
-                    Section {
-                        Toggle("Enable Parental Controls", isOn: $parental.isEnabled)
-                        Text("When enabled, catalogue titles above the maturity limit are hidden. Profile date of birth provides age assurance for each profile.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Section("Maturity limit") {
-                        Picker("Maximum content age", selection: $parental.maxMaturityAge) {
-                            Text("Kids (12)").tag(12)
-                            Text("Teen (15)").tag(15)
-                            Text("Young adult (17)").tag(17)
-                            Text("Adult (18+)").tag(18)
-                        }
-                    }
-
-                    Section("Restrictions") {
-                        Toggle("Require PIN to switch profiles", isOn: $parental.requirePinToSwitchProfile)
-                        Toggle("Require PIN before playback", isOn: $parental.requirePinForPlayer)
-                        Toggle("Block new downloads", isOn: $parental.blockDownloads)
-                    }
-
-                    Section("PIN") {
-                        if parental.hasPIN {
-                            Text("PIN is active on this device")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                            SecureField("New PIN (optional)", text: $newPIN)
-                                .keyboardType(.numberPad)
-                            SecureField("Confirm new PIN", text: $confirmPIN)
-                                .keyboardType(.numberPad)
-                            Button("Update PIN") {
-                                guard newPIN.count == 4, newPIN == confirmPIN else { return }
-                                parental.setPIN(newPIN)
-                                newPIN = ""
-                                confirmPIN = ""
-                            }
-                            Button("Remove PIN", role: .destructive) {
-                                parental.clearPIN()
-                            }
-                        } else {
-                            SecureField("Set 4-digit PIN", text: $newPIN)
-                                .keyboardType(.numberPad)
-                            SecureField("Confirm PIN", text: $confirmPIN)
-                                .keyboardType(.numberPad)
-                            Button("Save PIN") {
-                                guard newPIN.count == 4, newPIN == confirmPIN else { return }
-                                parental.setPIN(newPIN)
-                                newPIN = ""
-                                confirmPIN = ""
-                            }
-                        }
-                        Text("PIN is stored on this device only. Maturity limits may sync from your account settings when available; the PIN does not sync from the website.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Section("Age Assurance") {
-                        Text("Each viewer profile is created with a date of birth. Kids, Teen and Adult labels are used for age assurance throughout the app.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                        pinSection
+                        ageAssuranceNote
                     }
                 }
+                .padding(20)
+                .padding(.bottom, 32)
             }
-            .scrollContentBackground(.hidden)
-            .background(Theme.background)
+            .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Parental Controls")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                        .foregroundStyle(Theme.accent)
                 }
             }
             .onAppear {
@@ -398,6 +335,416 @@ struct ParentalControlsView: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    // MARK: - Lock gate
+
+    private var lockGate: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "lock.shield.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(Theme.accent)
+                .padding(.top, 24)
+
+            Text("Enter your PIN to manage parental controls")
+                .font(.subheadline)
+                .foregroundStyle(Theme.muted)
+                .multilineTextAlignment(.center)
+
+            pinDots(value: pinInput)
+
+            numPad(value: $pinInput) {
+                if parental.verifyPIN(pinInput) {
+                    withAnimation(.easeInOut(duration: 0.25)) { unlocked = true }
+                    unlockError = nil
+                } else {
+                    unlockError = "Incorrect PIN"
+                    pinInput = ""
+                }
+            }
+
+            if let unlockError {
+                Text(unlockError)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    // MARK: - Enable toggle
+
+    private var enableSection: some View {
+        cardSection {
+            HStack {
+                Image(systemName: "lock.shield.fill")
+                    .font(.title3)
+                    .foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Parental Controls")
+                        .font(.headline)
+                        .foregroundStyle(Theme.foreground)
+                    Text(parental.isEnabled ? "Active — content is filtered" : "Off — all content visible")
+                        .font(.caption)
+                        .foregroundStyle(parental.isEnabled ? .green.opacity(0.9) : Theme.muted)
+                }
+                Spacer()
+                Toggle("", isOn: $parental.isEnabled.animation(.easeInOut(duration: 0.25)))
+                    .labelsHidden()
+                    .tint(Theme.accent)
+            }
+            Text("When enabled, titles above the maturity limit are hidden from Home, Search, My List, and all browsing areas. Profile date of birth provides age assurance.")
+                .font(.footnote)
+                .foregroundStyle(Theme.muted)
+        }
+    }
+
+    // MARK: - Maturity picker
+
+    private var maturitySection: some View {
+        cardSection {
+            Text("Maturity Limit")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.muted)
+            ForEach(maturityOptions, id: \.age) { option in
+                maturityRow(option)
+            }
+            Text("Content rated above this limit will be hidden throughout the app.")
+                .font(.footnote)
+                .foregroundStyle(Theme.muted)
+                .padding(.top, 4)
+        }
+    }
+
+    private struct MaturityOption {
+        let age: Int
+        let label: String
+        let description: String
+        let icon: String
+    }
+
+    private var maturityOptions: [MaturityOption] {
+        [
+            .init(age: 7, label: "Little Kids", description: "Ages 7 and under", icon: "figure.child"),
+            .init(age: 12, label: "Kids", description: "Ages 12 and under", icon: "figure.and.child.holdinghands"),
+            .init(age: 15, label: "Teens", description: "Ages 15 and under", icon: "person.fill"),
+            .init(age: 17, label: "Young Adults", description: "Ages 17 and under", icon: "person.2.fill"),
+            .init(age: 18, label: "All Content", description: "No restrictions", icon: "globe"),
+        ]
+    }
+
+    private func maturityRow(_ option: MaturityOption) -> some View {
+        let selected = parental.maxMaturityAge == option.age
+        return Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                parental.maxMaturityAge = option.age
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: option.icon)
+                    .font(.body)
+                    .foregroundStyle(selected ? Theme.accent : Theme.muted)
+                    .frame(width: 26)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(option.label)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Theme.foreground)
+                    Text(option.description)
+                        .font(.caption)
+                        .foregroundStyle(Theme.muted)
+                }
+                Spacer()
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(selected ? Theme.accent : Theme.muted.opacity(0.4))
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Restrictions
+
+    private var restrictionsSection: some View {
+        cardSection {
+            Text("Restrictions")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.muted)
+            restrictionToggle("Require PIN to switch profiles", icon: "person.2.fill", isOn: $parental.requirePinToSwitchProfile)
+            restrictionToggle("Require PIN before playback", icon: "play.fill", isOn: $parental.requirePinForPlayer)
+            restrictionToggle("Block new downloads", icon: "arrow.down.circle", isOn: $parental.blockDownloads)
+        }
+    }
+
+    private func restrictionToggle(_ title: String, icon: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.body)
+                .foregroundStyle(Theme.accent)
+                .frame(width: 26)
+            Text(title)
+                .font(.body)
+                .foregroundStyle(Theme.foreground)
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .tint(Theme.accent)
+        }
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - PIN management
+
+    private var pinSection: some View {
+        cardSection {
+            HStack {
+                Text("Device PIN")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.muted)
+                Spacer()
+                if parental.hasPIN {
+                    Image(systemName: "checkmark.shield.fill")
+                        .foregroundStyle(.green.opacity(0.8))
+                        .font(.caption)
+                    Text("Active")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.green.opacity(0.8))
+                }
+            }
+
+            if parental.hasPIN {
+                Text("Your 4-digit PIN protects parental settings on this device.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.muted)
+
+                HStack(spacing: 10) {
+                    SecureField("New PIN", text: $newPIN)
+                        .keyboardType(.numberPad)
+                        .textContentType(.oneTimeCode)
+                        .padding(12)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    SecureField("Confirm", text: $confirmPIN)
+                        .keyboardType(.numberPad)
+                        .textContentType(.oneTimeCode)
+                        .padding(12)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+
+                if let pinError {
+                    Text(pinError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+                if let pinSuccess {
+                    Text(pinSuccess)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.green.opacity(0.9))
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        attemptUpdatePIN()
+                    } label: {
+                        Text("Update PIN")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Theme.accent.opacity(0.15))
+                            .foregroundStyle(Theme.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    Button {
+                        parental.clearPIN()
+                        newPIN = ""
+                        confirmPIN = ""
+                        pinError = nil
+                        pinSuccess = "PIN removed"
+                        clearSuccessAfterDelay()
+                    } label: {
+                        Text("Remove PIN")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.red.opacity(0.12))
+                            .foregroundStyle(.red.opacity(0.9))
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                }
+            } else {
+                Text("Set a 4-digit PIN to lock parental settings on this device.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.muted)
+
+                HStack(spacing: 10) {
+                    SecureField("PIN", text: $newPIN)
+                        .keyboardType(.numberPad)
+                        .textContentType(.oneTimeCode)
+                        .padding(12)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    SecureField("Confirm", text: $confirmPIN)
+                        .keyboardType(.numberPad)
+                        .textContentType(.oneTimeCode)
+                        .padding(12)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+
+                if let pinError {
+                    Text(pinError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+                if let pinSuccess {
+                    Text(pinSuccess)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.green.opacity(0.9))
+                }
+
+                Button {
+                    attemptSavePIN()
+                } label: {
+                    Text("Set PIN")
+                        .font(.subheadline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Theme.accent)
+                        .foregroundStyle(.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+
+            Text("PIN is stored on this device only and does not sync.")
+                .font(.caption2)
+                .foregroundStyle(Theme.muted.opacity(0.7))
+        }
+    }
+
+    // MARK: - Age assurance note
+
+    private var ageAssuranceNote: some View {
+        cardSection {
+            Label("Age Assurance", systemImage: "checkmark.shield.fill")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.accentGold)
+            Text("Each viewer profile is created with a date of birth. Kids, Teen, and Adult labels are derived from the profile age and used for age assurance throughout the app.")
+                .font(.footnote)
+                .foregroundStyle(Theme.muted)
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func cardSection<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func attemptSavePIN() {
+        pinError = nil
+        pinSuccess = nil
+        guard newPIN.count == 4, newPIN.allSatisfy(\.isNumber) else {
+            pinError = "PIN must be exactly 4 digits"
+            return
+        }
+        guard newPIN == confirmPIN else {
+            pinError = "PINs don't match"
+            return
+        }
+        parental.setPIN(newPIN)
+        newPIN = ""
+        confirmPIN = ""
+        pinError = nil
+        pinSuccess = "PIN saved successfully"
+        clearSuccessAfterDelay()
+    }
+
+    private func attemptUpdatePIN() {
+        pinError = nil
+        pinSuccess = nil
+        guard !newPIN.isEmpty else {
+            pinError = "Enter a new PIN"
+            return
+        }
+        guard newPIN.count == 4, newPIN.allSatisfy(\.isNumber) else {
+            pinError = "PIN must be exactly 4 digits"
+            return
+        }
+        guard newPIN == confirmPIN else {
+            pinError = "PINs don't match"
+            return
+        }
+        parental.setPIN(newPIN)
+        newPIN = ""
+        confirmPIN = ""
+        pinError = nil
+        pinSuccess = "PIN updated successfully"
+        clearSuccessAfterDelay()
+    }
+
+    private func clearSuccessAfterDelay() {
+        Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            await MainActor.run { pinSuccess = nil }
+        }
+    }
+
+    // MARK: - Numeric PIN pad + dots
+
+    private func pinDots(value: String) -> some View {
+        HStack(spacing: 16) {
+            ForEach(0..<4, id: \.self) { i in
+                Circle()
+                    .fill(i < value.count ? Theme.accent : Color.white.opacity(0.15))
+                    .frame(width: 18, height: 18)
+                    .animation(.easeInOut(duration: 0.12), value: value.count)
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    private func numPad(value: Binding<String>, onComplete: @escaping () -> Void) -> some View {
+        let keys: [[String]] = [["1","2","3"],["4","5","6"],["7","8","9"],["","0","⌫"]]
+        return VStack(spacing: 12) {
+            ForEach(keys, id: \.self) { row in
+                HStack(spacing: 16) {
+                    ForEach(row, id: \.self) { key in
+                        if key.isEmpty {
+                            Color.clear.frame(width: 70, height: 50)
+                        } else {
+                            Button {
+                                if key == "⌫" {
+                                    if !value.wrappedValue.isEmpty { value.wrappedValue.removeLast() }
+                                } else if value.wrappedValue.count < 4 {
+                                    value.wrappedValue.append(key)
+                                    if value.wrappedValue.count == 4 {
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                            onComplete()
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Text(key)
+                                    .font(.title2.weight(.medium).monospacedDigit())
+                                    .foregroundStyle(Theme.foreground)
+                                    .frame(width: 70, height: 50)
+                                    .background(Color.white.opacity(0.08))
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

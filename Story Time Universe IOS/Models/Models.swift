@@ -346,6 +346,11 @@ struct ContentDetail: Codable, Identifiable, Hashable {
         return "\(mins) min"
     }
 
+    /// Derive a numeric minimum age from the ageRating string (e.g. "PG-13" → 13, "18+" → 18, "R" → 17).
+    var numericMinAge: Int? {
+        Self.parseMinAge(from: ageRating)
+    }
+
     var asContentItem: ContentItem {
         ContentItem(
             id: id,
@@ -361,8 +366,31 @@ struct ContentDetail: Codable, Identifiable, Hashable {
             duration: duration,
             featured: nil,
             tags: tags,
-            minAge: nil
+            minAge: numericMinAge
         )
+    }
+
+    static func parseMinAge(from rating: String?) -> Int? {
+        guard let raw = rating?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
+              !raw.isEmpty else { return nil }
+
+        let digits = raw.filter(\.isNumber)
+        if let num = Int(digits), num > 0, num <= 21 { return num }
+
+        switch raw {
+        case "G", "U", "ALL", "EVERYONE", "TV-Y", "TV-Y7", "TV-G":
+            return 0
+        case "PG", "TV-PG":
+            return 7
+        case "PG-13", "TV-14", "12A", "12":
+            return 13
+        case "R", "M", "MA15+", "15", "TV-MA":
+            return 17
+        case "NC-17", "X", "18", "18+", "ADULTS", "AO":
+            return 18
+        default:
+            return nil
+        }
     }
 
     enum CodingKeys: String, CodingKey {

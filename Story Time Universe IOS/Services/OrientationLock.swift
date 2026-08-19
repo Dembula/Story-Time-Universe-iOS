@@ -13,16 +13,17 @@ enum OrientationLock {
         }
     }
 
-    /// Restore portrait after leaving the player — smooth path to avoid UI glitches.
+    /// Restore portrait after leaving the player — multiple passes to survive dismiss animations.
     static func unlockPortrait() {
         allowed = .portrait
         DispatchQueue.main.async {
             force(orientation: .portrait)
         }
-        // Second pass after dismiss animation settles.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            guard allowed == .portrait else { return }
-            force(orientation: .portrait)
+        for delay in [0.3, 0.6, 1.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard allowed == .portrait else { return }
+                force(orientation: .portrait)
+            }
         }
     }
 

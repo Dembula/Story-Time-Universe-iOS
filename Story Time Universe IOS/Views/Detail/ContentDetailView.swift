@@ -46,6 +46,13 @@ struct ContentDetailView: View {
         return seed?.posterCandidates ?? []
     }
 
+    private var isMaturityBlocked: Bool {
+        guard parental.isEnabled else { return false }
+        let contentAge = detail?.numericMinAge ?? seed?.minAge
+        guard let contentAge, contentAge > 0 else { return false }
+        return !parental.allows(contentMinAge: contentAge, profileAge: appState.activeProfile?.age)
+    }
+
     private var synopsisText: String? {
         let raw = detail?.description ?? seed?.description
         guard let raw else { return nil }
@@ -54,6 +61,37 @@ struct ContentDetailView: View {
     }
 
     var body: some View {
+        if isMaturityBlocked {
+            maturityBlockedView
+        } else {
+            mainContent
+        }
+    }
+
+    private var maturityBlockedView: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Image(systemName: "lock.shield.fill")
+                .font(.system(size: 56))
+                .foregroundStyle(Theme.accent.opacity(0.7))
+            Text("Content Restricted")
+                .font(.title2.bold())
+                .foregroundStyle(Theme.foreground)
+            Text("This title is rated \(detail?.ageRating ?? "above your limit") and is blocked by parental controls (limit: \(parental.maturityLabel)).")
+                .font(.subheadline)
+                .foregroundStyle(Theme.muted)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.background.ignoresSafeArea())
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 DetailHeroView(

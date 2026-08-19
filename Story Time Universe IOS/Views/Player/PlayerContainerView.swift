@@ -646,7 +646,6 @@ struct PlayerContainerView: View {
     }
 
     private func unlockOrientationOnce() {
-        guard !didUnlockOrientation else { return }
         didUnlockOrientation = true
         OrientationLock.unlockPortrait()
     }

@@ -86,7 +86,8 @@ final class ParentalControls: ObservableObject {
 
     var maturityLabel: String {
         switch maxMaturityAge {
-        case ...12: return "Kids (up to 12)"
+        case ...7: return "Little Kids (up to 7)"
+        case 8...12: return "Kids (up to 12)"
         case 13...15: return "Teen (up to 15)"
         case 16...17: return "Young adult (up to 17)"
         default: return "Adult (unrestricted)"
