@@ -71,9 +71,21 @@ struct CatalogueListView: View {
 
     private func catalogueRow(index: Int, item: ContentItem) -> some View {
         HStack(spacing: 14) {
-            RemoteImage(urls: item.posterCandidates, preferPortrait: true)
-                .frame(width: 72, height: 108)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            ZStack(alignment: .topTrailing) {
+                RemoteImage(urls: item.posterCandidates, preferPortrait: true)
+                    .frame(width: 72, height: 108)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                if item.showsNewBadge {
+                    Text("NEW")
+                        .font(.system(size: 8, weight: .heavy))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                        .padding(4)
+                }
+            }
 
             Text("\(index)")
                 .font(.title2.weight(.bold))
@@ -86,15 +98,17 @@ struct CatalogueListView: View {
                     .foregroundStyle(Theme.foreground)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                Text(
-                    [item.displayType, item.category]
-                        .compactMap { $0 }
-                        .filter { !$0.isEmpty }
-                        .joined(separator: " · ")
-                )
-                .font(.subheadline)
-                .foregroundStyle(Theme.muted)
-                .lineLimit(1)
+                if let year = item.year {
+                    Text(String(year))
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.muted)
+                        .lineLimit(1)
+                } else if let type = item.type, !type.isEmpty {
+                    Text(item.displayType)
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.muted)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 0)
         }

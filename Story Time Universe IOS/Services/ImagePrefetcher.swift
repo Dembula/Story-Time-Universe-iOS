@@ -2,7 +2,7 @@ import Foundation
 
 /// Warms poster/backdrop caches as soon as catalogue rows arrive.
 enum ImagePrefetcher {
-    private static let maxConcurrent = 6
+    private static let maxConcurrent = 10
 
     static func prefetchPosters(_ items: [ContentItem]) {
         prefetch(items.map(\.posterCandidates), preferPortrait: true)

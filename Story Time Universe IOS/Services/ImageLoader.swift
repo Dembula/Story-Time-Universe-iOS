@@ -17,7 +17,8 @@ actor ImageLoader {
         // Catalogue posters can be very large (The Second poster is ~14MB on S3).
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 120
-        config.waitsForConnectivity = true
+        // Prefer disk cache immediately when offline — don't hang waiting for a path.
+        config.waitsForConnectivity = false
         config.urlCache = URLCache(
             memoryCapacity: 64 * 1024 * 1024,
             diskCapacity: 512 * 1024 * 1024,

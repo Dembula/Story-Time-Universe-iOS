@@ -72,13 +72,16 @@ struct ProfilesView: View {
     }
 
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 12) {
             Image("AppLogo")
                 .resizable()
                 .scaledToFit()
-                .frame(height: 34)
-                .shadow(color: Theme.accent.opacity(0.4), radius: 8)
+                .frame(height: 40)
+                .shadow(color: Theme.accent.opacity(0.55), radius: 10, y: 0)
+                .accessibilityLabel("Story Time Universe")
+
             Spacer()
+
             Button("Sign Out") {
                 Task { await appState.signOut() }
             }

@@ -40,8 +40,13 @@ struct PlayerContainerView: View {
     @State private var isRetryingAfterPurchase = false
     @State private var scrubPosition: Double = 0
     @State private var scrubDuration: Double = 1
+    @State private var resolvedEpisodes: [EpisodePlaybackInfo] = []
 
     private let haptic = UIImpactFeedbackGenerator(style: .light)
+
+    private var effectiveEpisodes: [EpisodePlaybackInfo] {
+        resolvedEpisodes.isEmpty ? episodes : resolvedEpisodes
+    }
 
     var body: some View {
         ZStack {
@@ -61,6 +66,13 @@ struct PlayerContainerView: View {
 
                 if isAdjustingBrightness && !isLocked {
                     brightnessHUD.allowsHitTesting(false)
+                }
+
+                // Captions stay visible even when chrome is hidden.
+                if !isTrailer, let caption = model.subtitles.activeText, model.subtitles.isEnabled {
+                    subtitleOverlay(caption)
+                        .allowsHitTesting(false)
+                        .zIndex(5)
                 }
 
                 if isLocked {
@@ -103,7 +115,7 @@ struct PlayerContainerView: View {
                 trailer: isTrailer,
                 forceRestart: forceRestart
             )
-            offerRestartWindow()
+            await resolveEpisodeQueueIfNeeded()
             scheduleHideControls()
         }
         .onDisappear {
@@ -111,8 +123,22 @@ struct PlayerContainerView: View {
             countdownTask?.cancel()
             restartTask?.cancel()
             seekBurstTask?.cancel()
+            // If PiP is active, keep the AVPlayer alive for the system mini player.
+            if PictureInPictureManager.shared.isActive {
+                unlockOrientationOnce()
+                PictureInPictureManager.shared.onStopWhileDetached = { [model] in
+                    model.stop()
+                    PictureInPictureManager.shared.detach()
+                }
+                return
+            }
             model.stop()
+            PictureInPictureManager.shared.detach()
             unlockOrientationOnce()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+            guard model.isPlaying, !isTrailer else { return }
+            PictureInPictureManager.shared.startIfPossible()
         }
         .onChange(of: model.isPlaying) { _, playing in
             if playing {
@@ -144,17 +170,17 @@ struct PlayerContainerView: View {
 
     private var currentIndex: Int? {
         guard let currentEpisodeId else { return nil }
-        return episodes.firstIndex { $0.episodeId == currentEpisodeId }
+        return effectiveEpisodes.firstIndex { $0.episodeId == currentEpisodeId }
     }
 
     private var nextEpisode: EpisodePlaybackInfo? {
-        guard let idx = currentIndex, idx + 1 < episodes.count else { return nil }
-        return episodes[idx + 1]
+        guard let idx = currentIndex, idx + 1 < effectiveEpisodes.count else { return nil }
+        return effectiveEpisodes[idx + 1]
     }
 
     private var episodeTitleLine: String {
         if isTrailer { return "Trailer · \(title)" }
-        if let current = episodes.first(where: { $0.episodeId == currentEpisodeId }) {
+        if let current = effectiveEpisodes.first(where: { $0.episodeId == currentEpisodeId }) {
             return "\(current.episodeLabel)  \"\(current.title)\""
         }
         return title
@@ -207,6 +233,11 @@ struct PlayerContainerView: View {
 
                 Spacer()
 
+                if !effectiveEpisodes.isEmpty, !isTrailer {
+                    episodeStrip
+                        .padding(.bottom, 8)
+                }
+
                 bottomTransport(player: player)
                     .padding(.horizontal, 20)
                     .padding(.bottom, 16)
@@ -220,35 +251,137 @@ struct PlayerContainerView: View {
         }
     }
 
+    private func subtitleOverlay(_ text: String) -> some View {
+        VStack {
+            Spacer()
+            Text(text)
+                .font(.system(size: 18, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.9), radius: 2, y: 1)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 8)
+                .background(Color.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.horizontal, 40)
+                .padding(.bottom, controlsVisible && !effectiveEpisodes.isEmpty ? 150 : (controlsVisible ? 90 : 36))
+                .animation(.easeInOut(duration: 0.2), value: controlsVisible)
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var episodeStrip: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Episodes")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white.opacity(0.75))
+                .padding(.horizontal, 20)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(effectiveEpisodes) { episode in
+                        let isCurrent = episode.episodeId == currentEpisodeId
+                        Button {
+                            playEpisode(episode)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.white.opacity(0.12))
+                                        .frame(width: 132, height: 74)
+                                    if let thumb = episode.thumbnailUrl {
+                                       let urls = MediaURL.candidates(posterUrl: thumb, backdropUrl: nil, videoUrl: nil, preferBackdrop: true)
+                                       if !urls.isEmpty {
+                                        RemoteImage(urls: urls)
+                                            .frame(width: 132, height: 74)
+                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                       }
+                                    }
+                                    if isCurrent {
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .stroke(Theme.accent, lineWidth: 2)
+                                            .frame(width: 132, height: 74)
+                                    }
+                                }
+                                Text(episode.episodeLabel)
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(isCurrent ? Theme.accent : .white.opacity(0.7))
+                                Text(episode.title)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                    .frame(width: 132, alignment: .leading)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+    }
+
     private var topBar: some View {
         HStack(spacing: 12) {
-            if showRestart && !restartConsumed && !isTrailer {
+            Image("AppLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 34, height: 34)
+                .shadow(color: Theme.accent.opacity(0.5), radius: 8, y: 0)
+                .accessibilityHidden(true)
+
+            Text(episodeTitleLine)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .shadow(color: .black.opacity(0.65), radius: 3)
+
+            if !isTrailer {
                 Button {
-                    restartConsumed = true
-                    showRestart = false
-                    restartTask?.cancel()
                     model.seek(to: 0)
                     model.play()
                     lightHaptic()
+                    showControls(persistent: false)
                 } label: {
-                    Label("Restart", systemImage: "arrow.counterclockwise")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(.ultraThinMaterial, in: Capsule())
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.95))
+                        .frame(width: 32, height: 32)
+                        .background(Color.white.opacity(0.12), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .transition(.opacity.combined(with: .move(edge: .leading)))
+                .accessibilityLabel("Restart")
             }
 
-            Text(episodeTitleLine)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .shadow(color: .black.opacity(0.6), radius: 4)
-
             Spacer(minLength: 8)
+
+            if !model.subtitles.availableTracks.isEmpty {
+                Button {
+                    lightHaptic()
+                    model.subtitles.isEnabled.toggle()
+                } label: {
+                    Image(systemName: model.subtitles.isEnabled ? "captions.bubble.fill" : "captions.bubble")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(model.subtitles.isEnabled ? Theme.accent : .white)
+                        .frame(width: 36, height: 36)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if !isTrailer, PictureInPictureManager.shared.isPossible || model.player != nil {
+                Button {
+                    lightHaptic()
+                    PictureInPictureManager.shared.startIfPossible()
+                } label: {
+                    Image(systemName: "pip.enter")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Picture in Picture")
+            }
 
             Button {
                 lightHaptic()
@@ -258,7 +391,7 @@ struct PlayerContainerView: View {
                 Image(systemName: "lock.open.fill")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
+                    .frame(width: 36, height: 36)
                     .background(.ultraThinMaterial, in: Circle())
             }
             .buttonStyle(.plain)
@@ -267,7 +400,7 @@ struct PlayerContainerView: View {
                 Image(systemName: "xmark")
                     .font(.body.weight(.bold))
                     .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
+                    .frame(width: 36, height: 36)
                     .background(.ultraThinMaterial, in: Circle())
             }
             .buttonStyle(.plain)
@@ -477,20 +610,34 @@ struct PlayerContainerView: View {
                     .frame(width: third)
                     .contentShape(Rectangle())
                     .gesture(
-                        DragGesture(minimumDistance: 12)
+                        DragGesture(minimumDistance: 8)
                             .onChanged { value in
                                 guard !isLocked else { return }
+                                let vertical = abs(value.translation.height)
+                                let horizontal = abs(value.translation.width)
+                                guard vertical > horizontal || isAdjustingBrightness else { return }
                                 if !isAdjustingBrightness {
-                                    guard abs(value.translation.height) > abs(value.translation.width) else { return }
                                     isAdjustingBrightness = true
                                     brightnessBase = brightness
-                                    controlsVisible = false
                                     hideTask?.cancel()
+                                    withAnimation(.easeOut(duration: 0.2)) {
+                                        controlsVisible = false
+                                    }
                                 }
-                                let delta = -Double(value.translation.height) / Double(geo.size.height * 0.55)
-                                brightness = min(1, max(0, brightnessBase + delta))
+                                // Smooth, proportional brightness — full screen height ≈ full range.
+                                let delta = -Double(value.translation.height) / Double(max(geo.size.height * 0.65, 1))
+                                let next = min(1, max(0, brightnessBase + delta))
+                                brightness = brightness * 0.2 + next * 0.8
                             }
-                            .onEnded { _ in isAdjustingBrightness = false }
+                            .onEnded { _ in
+                                withAnimation(.easeOut(duration: 0.18)) {
+                                    isAdjustingBrightness = false
+                                }
+                                // Keep chrome faded; it returns on the next tap (same as normal playback).
+                                if model.isPlaying {
+                                    scheduleHideControls()
+                                }
+                            }
                     )
                     .onTapGesture(count: 2) { doubleTapSeek(by: -10) }
                     .onTapGesture { if !isAdjustingBrightness { toggleControls() } }
@@ -534,23 +681,65 @@ struct PlayerContainerView: View {
     }
 
     private func offerRestartWindow() {
-        guard !isTrailer else {
-            showRestart = false
-            return
-        }
-        showRestart = true
+        // Restart lives in the chrome overlay — it fades with controls and returns on tap.
+        showRestart = !isTrailer
         restartConsumed = false
         restartTask?.cancel()
-        restartTask = Task {
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(.easeOut(duration: 0.3)) {
-                    showRestart = false
-                    restartConsumed = true
-                }
+        restartTask = nil
+    }
+
+    private func playEpisode(_ episode: EpisodePlaybackInfo) {
+        guard episode.episodeId != currentEpisodeId else {
+            showControls(persistent: false)
+            return
+        }
+        countdownTask?.cancel()
+        showEndCreditsPrompt = false
+        showNearEndNext = false
+        nearEndSuppressed = false
+        currentEpisodeId = episode.episodeId
+        lightHaptic()
+        Task {
+            await model.start(contentId: contentId, episodeId: episode.episodeId, trailer: false)
+            scheduleHideControls()
+        }
+    }
+
+    private func resolveEpisodeQueueIfNeeded() async {
+        guard !isTrailer, episodes.isEmpty, NetworkMonitor.shared.isOnline else {
+            if currentEpisodeId == nil { currentEpisodeId = episodeId }
+            return
+        }
+        guard let detail = try? await ViewerAPI.shared.fetchContentDetail(id: contentId),
+              let seasons = detail.seasons, !seasons.isEmpty else { return }
+
+        var list: [EpisodePlaybackInfo] = []
+        for season in seasons {
+            let sNum = season.seasonNumber ?? 1
+            for episode in season.episodes ?? [] {
+                let eNum = episode.episodeNumber ?? (list.count + 1)
+                list.append(
+                    EpisodePlaybackInfo(
+                        episodeId: episode.id,
+                        title: episode.title ?? "Episode \(eNum)",
+                        episodeLabel: "S\(sNum) E\(eNum)",
+                        thumbnailUrl: episode.thumbnailUrl,
+                        durationSeconds: episode.duration
+                    )
+                )
             }
         }
+        guard !list.isEmpty else { return }
+        resolvedEpisodes = list
+        if currentEpisodeId == nil {
+            currentEpisodeId = episodeId ?? list.first?.episodeId
+        }
+        ImagePrefetcher.prefetch(
+            list.map {
+                MediaURL.candidates(posterUrl: $0.thumbnailUrl, backdropUrl: nil, videoUrl: nil, preferBackdrop: true)
+            },
+            preferPortrait: false
+        )
     }
 
     private func updateScrubMirror() {
@@ -607,7 +796,6 @@ struct PlayerContainerView: View {
         showNearEndNext = false
         nearEndSuppressed = false
         currentEpisodeId = next.episodeId
-        offerRestartWindow()
         Task {
             await model.start(contentId: contentId, episodeId: next.episodeId, trailer: false)
             scheduleHideControls()
@@ -758,27 +946,29 @@ private struct DoubleTapSeekOverlay: View {
 
 private struct BrightnessSlider: View {
     @Binding var brightness: Double
-    private let trackHeight: CGFloat = 120
-    private let trackWidth: CGFloat = 4
+    private let trackHeight: CGFloat = 132
+    private let trackWidth: CGFloat = 5
 
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: "sun.max.fill")
-                .font(.system(size: 11, weight: .semibold))
+            Image(systemName: brightness > 0.55 ? "sun.max.fill" : "sun.min.fill")
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.95))
             ZStack(alignment: .bottom) {
                 Capsule().fill(.white.opacity(0.22)).frame(width: trackWidth, height: trackHeight)
                 Capsule()
                     .fill(Color.white)
                     .frame(width: trackWidth, height: max(trackWidth, trackHeight * CGFloat(min(1, max(0, brightness)))))
+                    .animation(.interactiveSpring(response: 0.18, dampingFraction: 0.86), value: brightness)
             }
-            .frame(width: 40, height: trackHeight)
+            .frame(width: 44, height: trackHeight)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         let ratio = 1 - (value.location.y / trackHeight)
-                        brightness = min(1, max(0, Double(ratio)))
+                        let next = min(1, max(0, Double(ratio)))
+                        brightness = brightness * 0.2 + next * 0.8
                     }
             )
         }
@@ -795,12 +985,21 @@ private struct PlayerLayerView: UIViewRepresentable {
         view.playerLayer.player = player
         view.playerLayer.videoGravity = .resizeAspect
         view.backgroundColor = .black
+        PictureInPictureManager.shared.attach(playerLayer: view.playerLayer)
         return view
     }
 
     func updateUIView(_ uiView: PlayerUIView, context: Context) {
         if uiView.playerLayer.player !== player {
             uiView.playerLayer.player = player
+        }
+        PictureInPictureManager.shared.attach(playerLayer: uiView.playerLayer)
+    }
+
+    static func dismantleUIView(_ uiView: PlayerUIView, coordinator: ()) {
+        // Keep the layer attached while PiP is running so the mini player stays alive.
+        if !PictureInPictureManager.shared.isActive {
+            PictureInPictureManager.shared.detach()
         }
     }
 
@@ -908,6 +1107,7 @@ final class PlayerViewModel: ObservableObject {
     @Published var isPlaying = false
     @Published var didReachEnd = false
     @Published var needsPurchase = false
+    @Published var subtitles = SubtitleEngine()
 
     private var contentId = ""
     private var startGeneration = 0
@@ -916,13 +1116,19 @@ final class PlayerViewModel: ObservableObject {
     private var failObserver: NSObjectProtocol?
     private var statusObserver: NSKeyValueObservation?
     private var timeControlObserver: NSKeyValueObservation?
+    private var subtitleObserver: Any?
+    private var subtitleBag: AnyCancellable?
     private var watchedSeconds: Double = 0
     private var lastSavedPosition: Double = 0
     /// Last playback position already reported to `POST /api/watch` (creator view counts).
     private var lastReportedWatchSeconds: Double = 0
     private var suppressProgressNetwork = false
 
-    func start(contentId: String, episodeId: String?, trailer: Bool = false, forceRestart: Bool = false) async {
+    init() {
+        subtitleBag = subtitles.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+    }
         // Always tear down previous session first — critical for stability.
         tearDownPlayer(flushProgress: true)
 
@@ -937,6 +1143,7 @@ final class PlayerViewModel: ObservableObject {
         watchedSeconds = 0
         lastSavedPosition = 0
         lastReportedWatchSeconds = 0
+        subtitles.reset()
         defer {
             if generation == startGeneration {
                 isLoading = false
@@ -948,10 +1155,19 @@ final class PlayerViewModel: ObservableObject {
         do {
             let asset: AVURLAsset
             let isOffline: Bool
+            var subtitleTracks: [SubtitleTrack]?
 
             if !trailer, let offline = DownloadManager.shared.offlineAsset(contentId: contentId, episodeId: episodeId) {
                 asset = offline
                 isOffline = true
+                // Best-effort: still pull caption tracks when online so offline downloads can caption.
+                if NetworkMonitor.shared.isOnline {
+                    subtitleTracks = try? await ViewerAPI.shared.fetchPlaybackBundle(
+                        contentId: contentId,
+                        episodeId: episodeId,
+                        trailer: false
+                    ).subtitles
+                }
             } else {
                 // Prefer a freshly fetched bundle. Cached URL only as a soft hint after re-validate.
                 let bundle = try await ViewerAPI.shared.fetchPlaybackBundle(
@@ -965,6 +1181,7 @@ final class PlayerViewModel: ObservableObject {
                 }
                 asset = Self.authenticatedAsset(for: url)
                 isOffline = false
+                subtitleTracks = trailer ? nil : bundle.subtitles
             }
 
             // Soft metadata load — never crash on failure.
@@ -1006,6 +1223,8 @@ final class PlayerViewModel: ObservableObject {
             self.player = avPlayer
             suppressProgressNetwork = isOffline
             beginProgressReporting()
+            beginSubtitleObservation(avPlayer)
+            Task { await subtitles.load(tracks: subtitleTracks) }
 
             if resumeAt > 5 {
                 let time = CMTime(seconds: Double(resumeAt), preferredTimescale: 600)
@@ -1079,6 +1298,10 @@ final class PlayerViewModel: ObservableObject {
         if flushProgress { self.flushProgress(final: true) }
         progressTimer?.cancel()
         progressTimer = nil
+        if let subtitleObserver, let player {
+            player.removeTimeObserver(subtitleObserver)
+        }
+        subtitleObserver = nil
         timeControlObserver?.invalidate()
         timeControlObserver = nil
         statusObserver?.invalidate()
@@ -1095,6 +1318,23 @@ final class PlayerViewModel: ObservableObject {
         player?.replaceCurrentItem(with: nil)
         player = nil
         isPlaying = false
+        subtitles.reset()
+    }
+
+    private func beginSubtitleObservation(_ avPlayer: AVPlayer) {
+        if let subtitleObserver {
+            avPlayer.removeTimeObserver(subtitleObserver)
+            self.subtitleObserver = nil
+        }
+        let interval = CMTime(seconds: 0.2, preferredTimescale: 600)
+        subtitleObserver = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            guard let self else { return }
+            let seconds = time.seconds
+            guard seconds.isFinite else { return }
+            Task { @MainActor in
+                self.subtitles.updateTime(seconds)
+            }
+        }
     }
 
     private func observeEnd(of item: AVPlayerItem, generation: Int) {
@@ -1203,7 +1443,8 @@ final class PlayerViewModel: ObservableObject {
     private static func configureAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playback, mode: .moviePlayback, options: [])
+            // Playback category is required for background audio + Picture in Picture.
+            try session.setCategory(.playback, mode: .moviePlayback, options: [.allowAirPlay])
             try session.setActive(true, options: [])
         } catch {
             // Non-fatal.

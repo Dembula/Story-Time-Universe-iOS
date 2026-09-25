@@ -35,7 +35,8 @@ final class APIClient {
         config.httpShouldSetCookies = true
         config.timeoutIntervalForRequest = 45
         config.timeoutIntervalForResource = 120
-        config.waitsForConnectivity = true
+        // Fail fast when offline so bootstrap can enter Downloads-only mode.
+        config.waitsForConnectivity = false
         session = URLSession(configuration: config)
         decoder = JSONDecoder()
     }

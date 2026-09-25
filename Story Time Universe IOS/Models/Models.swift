@@ -57,9 +57,27 @@ struct ContentItem: Codable, Identifiable, Hashable {
     let featured: Bool?
     let tags: String?
     let minAge: Int?
+    let createdAt: String?
+    let publishedAt: String?
+    let isNew: Bool?
 
     var displayType: String {
         (type ?? "TITLE").replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    /// True when the title is freshly uploaded / marked new for browse badges.
+    var showsNewBadge: Bool {
+        if isNew == true { return true }
+        if let tags {
+            let lower = tags.lowercased()
+            if lower.contains("new") || lower.contains("#new") || lower.contains("just added") {
+                return true
+            }
+        }
+        if let date = Self.parseFlexibleDate(createdAt) ?? Self.parseFlexibleDate(publishedAt) {
+            return date.timeIntervalSinceNow > -30 * 24 * 60 * 60
+        }
+        return false
     }
 
     var posterCandidates: [URL] {
@@ -97,6 +115,8 @@ struct ContentItem: Codable, Identifiable, Hashable {
         case id, title, description, type, category, year
         case posterUrl, backdropUrl, trailerUrl, videoUrl
         case duration, featured, tags, minAge
+        case createdAt, publishedAt, isNew
+        case created_at, published_at, is_new, newlyAdded
     }
 
     init(
@@ -113,7 +133,10 @@ struct ContentItem: Codable, Identifiable, Hashable {
         duration: Int? = nil,
         featured: Bool? = nil,
         tags: String? = nil,
-        minAge: Int? = nil
+        minAge: Int? = nil,
+        createdAt: String? = nil,
+        publishedAt: String? = nil,
+        isNew: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -129,6 +152,9 @@ struct ContentItem: Codable, Identifiable, Hashable {
         self.featured = featured
         self.tags = tags
         self.minAge = minAge
+        self.createdAt = createdAt
+        self.publishedAt = publishedAt
+        self.isNew = isNew
     }
 
     init(from decoder: Decoder) throws {
@@ -147,6 +173,13 @@ struct ContentItem: Codable, Identifiable, Hashable {
         featured = try c.decodeIfPresent(Bool.self, forKey: .featured)
         tags = Self.decodeFlexibleString(c, forKey: .tags)
         minAge = Self.decodeFlexibleInt(c, forKey: .minAge)
+        createdAt = (try? c.decodeIfPresent(String.self, forKey: .createdAt))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .created_at))
+        publishedAt = (try? c.decodeIfPresent(String.self, forKey: .publishedAt))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .published_at))
+        isNew = (try? c.decodeIfPresent(Bool.self, forKey: .isNew))
+            ?? (try? c.decodeIfPresent(Bool.self, forKey: .is_new))
+            ?? (try? c.decodeIfPresent(Bool.self, forKey: .newlyAdded))
     }
 
     private static func decodeFlexibleInt(_ c: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Int? {
@@ -162,6 +195,19 @@ struct ContentItem: Codable, Identifiable, Hashable {
             return arr.joined(separator: ", ")
         }
         return nil
+    }
+
+    private static func parseFlexibleDate(_ raw: String?) -> Date? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = iso.date(from: raw) { return d }
+        iso.formatOptions = [.withInternetDateTime]
+        if let d = iso.date(from: raw) { return d }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"
+        return df.date(from: String(raw.prefix(10)))
     }
 }
 
@@ -252,6 +298,39 @@ struct Episode: Codable, Identifiable, Hashable {
     let duration: Int?
     let thumbnailUrl: String?
     let videoUrl: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, description, episodeNumber, duration, thumbnailUrl, videoUrl
+        case episode_number, thumbnail, thumbUrl, posterUrl, video_url
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let s = try? c.decode(String.self, forKey: .id) {
+            id = s
+        } else if let i = try? c.decode(Int.self, forKey: .id) {
+            id = String(i)
+        } else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "Episode id missing")
+        }
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        episodeNumber = Self.flexInt(c, .episodeNumber) ?? Self.flexInt(c, .episode_number)
+        duration = Self.flexInt(c, .duration)
+        thumbnailUrl = (try? c.decodeIfPresent(String.self, forKey: .thumbnailUrl))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .thumbnail))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .thumbUrl))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .posterUrl))
+        videoUrl = (try? c.decodeIfPresent(String.self, forKey: .videoUrl))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .video_url))
+    }
+
+    private static func flexInt(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Int? {
+        if let v = try? c.decodeIfPresent(Int.self, forKey: key) { return v }
+        if let v = try? c.decodeIfPresent(Double.self, forKey: key) { return Int(v) }
+        if let s = try? c.decodeIfPresent(String.self, forKey: key), let v = Int(s) { return v }
+        return nil
+    }
 }
 
 struct Season: Codable, Hashable {
@@ -261,6 +340,88 @@ struct Season: Codable, Hashable {
     let episodes: [Episode]?
 
     var stableId: String { id ?? "season-\(seasonNumber ?? 0)" }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, episodes
+        case seasonNumber, season_number, number
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let s = try? c.decodeIfPresent(String.self, forKey: .id) {
+            id = s
+        } else if let i = try? c.decodeIfPresent(Int.self, forKey: .id) {
+            id = String(i)
+        } else {
+            id = nil
+        }
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        seasonNumber = Self.flexInt(c, .seasonNumber)
+            ?? Self.flexInt(c, .season_number)
+            ?? Self.flexInt(c, .number)
+        episodes = Self.decodeEpisodesLossy(from: c)
+    }
+
+    private static func flexInt(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Int? {
+        if let v = try? c.decodeIfPresent(Int.self, forKey: key) { return v }
+        if let v = try? c.decodeIfPresent(Double.self, forKey: key) { return Int(v) }
+        if let s = try? c.decodeIfPresent(String.self, forKey: key), let v = Int(s) { return v }
+        return nil
+    }
+
+    private static func decodeEpisodesLossy(from c: KeyedDecodingContainer<CodingKeys>) -> [Episode]? {
+        guard c.contains(.episodes) else { return nil }
+        guard var unkeyed = try? c.nestedUnkeyedContainer(forKey: .episodes) else {
+            return try? c.decodeIfPresent([Episode].self, forKey: .episodes)
+        }
+        var out: [Episode] = []
+        while !unkeyed.isAtEnd {
+            if let episode = try? unkeyed.decode(Episode.self) {
+                out.append(episode)
+            } else {
+                // Skip malformed episode objects without aborting the season.
+                _ = try? unkeyed.decode(LossyJSONValue.self)
+            }
+        }
+        return out
+    }
+}
+
+/// Minimal JSON value used only to advance past bad episode entries.
+private enum LossyJSONValue: Decodable {
+    case null
+    case bool
+    case number
+    case string
+    case array
+    case object
+
+    init(from decoder: Decoder) throws {
+        if let container = try? decoder.singleValueContainer() {
+            if container.decodeNil() { self = .null; return }
+            if (try? container.decode(Bool.self)) != nil { self = .bool; return }
+            if (try? container.decode(Double.self)) != nil { self = .number; return }
+            if (try? container.decode(String.self)) != nil { self = .string; return }
+        }
+        if var unkeyed = try? decoder.unkeyedContainer() {
+            while !unkeyed.isAtEnd { _ = try? unkeyed.decode(LossyJSONValue.self) }
+            self = .array
+            return
+        }
+        if let keyed = try? decoder.container(keyedBy: DynamicKey.self) {
+            for key in keyed.allKeys { _ = try? keyed.decode(LossyJSONValue.self, forKey: key) }
+            self = .object
+            return
+        }
+        self = .null
+    }
+
+    private struct DynamicKey: CodingKey {
+        var stringValue: String
+        init?(stringValue: String) { self.stringValue = stringValue }
+        var intValue: Int?
+        init?(intValue: Int) { self.stringValue = "\(intValue)"; self.intValue = intValue }
+    }
 }
 
 struct BtsVideo: Codable, Identifiable, Hashable {
@@ -437,7 +598,12 @@ struct ContentDetail: Codable, Identifiable, Hashable {
         ageRating = try c.decodeIfPresent(String.self, forKey: .ageRating)
         creator = try c.decodeIfPresent(CreatorInfo.self, forKey: .creator)
         ratingStats = try c.decodeIfPresent(RatingStats.self, forKey: .ratingStats)
-        seasons = try c.decodeIfPresent([Season].self, forKey: .seasons)
+        // Soft-decode seasons so one bad episode doesn't wipe the whole series list.
+        if let decoded = try? c.decodeIfPresent([Season].self, forKey: .seasons) {
+            seasons = decoded
+        } else {
+            seasons = nil
+        }
         btsVideos = try c.decodeIfPresent([BtsVideo].self, forKey: .btsVideos)
     }
 }
@@ -453,6 +619,31 @@ struct SubtitleTrack: Codable, Identifiable, Hashable {
     let label: String?
     let vttUrl: String?
     let isDefault: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id, language, label, vttUrl, isDefault
+        case url, src, fileUrl, subtitleUrl, defaultTrack
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let s = try? c.decode(String.self, forKey: .id) {
+            id = s
+        } else if let i = try? c.decode(Int.self, forKey: .id) {
+            id = String(i)
+        } else {
+            id = UUID().uuidString
+        }
+        language = try c.decodeIfPresent(String.self, forKey: .language)
+        label = try c.decodeIfPresent(String.self, forKey: .label)
+        vttUrl = (try? c.decodeIfPresent(String.self, forKey: .vttUrl))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .url))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .src))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .fileUrl))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .subtitleUrl))
+        isDefault = (try? c.decodeIfPresent(Bool.self, forKey: .isDefault))
+            ?? (try? c.decodeIfPresent(Bool.self, forKey: .defaultTrack))
+    }
 }
 
 struct PlaybackBundle: Codable, Hashable {

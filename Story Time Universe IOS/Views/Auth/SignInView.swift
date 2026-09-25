@@ -54,8 +54,8 @@ struct SignInView: View {
                     Image("AppLogo")
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 118, height: 118)
-                        .shadow(color: Theme.accent.opacity(0.5), radius: 28, y: 10)
+                        .frame(width: 132, height: 132)
+                        .shadow(color: Theme.accent.opacity(0.55), radius: 22, y: 0)
 
                     VStack(spacing: 6) {
                         Text("Story Time Universe")

@@ -114,8 +114,8 @@ struct SubscriptionPaywallView: View {
             Image("AppLogo")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 88, height: 88)
-                .shadow(color: Theme.accent.opacity(0.4), radius: 20, y: 8)
+                .frame(width: 96, height: 96)
+                .shadow(color: Theme.accent.opacity(0.45), radius: 18, y: 0)
 
             Text(headline)
                 .font(.title2.bold())

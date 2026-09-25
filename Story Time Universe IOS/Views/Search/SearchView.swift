@@ -162,15 +162,10 @@ struct SearchView: View {
                     .foregroundStyle(Theme.foreground)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                Text(
-                    [item.displayType, item.category]
-                        .compactMap { $0 }
-                        .filter { !$0.isEmpty }
-                        .joined(separator: " · ")
-                )
-                .font(.subheadline)
-                .foregroundStyle(Theme.muted)
-                .lineLimit(1)
+                Text(item.displayType)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.muted)
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 0)

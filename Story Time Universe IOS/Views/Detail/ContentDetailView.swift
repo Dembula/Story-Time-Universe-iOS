@@ -121,7 +121,14 @@ struct ContentDetailView: View {
                     seasons: detail?.seasons ?? [],
                     seriesTitle: displayTitle,
                     seriesContentId: contentId,
-                    contentType: detail?.type,
+                    contentType: detail?.type ?? seed?.type,
+                    category: detail?.category ?? seed?.category,
+                    year: detail?.year ?? seed?.year,
+                    ageRating: detail?.ageRating,
+                    language: detail?.language,
+                    country: detail?.country,
+                    runtimeLabel: detail?.runtimeLabel,
+                    creatorName: detail?.creator?.name,
                     related: related,
                     crew: crew,
                     btsVideos: detail?.btsVideos ?? [],
@@ -245,23 +252,17 @@ struct ContentDetailView: View {
 
     private var metaText: String {
         var parts: [String] = []
-        if let type = detail?.type ?? seed?.type {
-            parts.append(type.replacingOccurrences(of: "_", with: " ").capitalized)
-        }
-        if let category = detail?.category ?? seed?.category, !category.isEmpty {
-            parts.append(category)
-        }
         if let year = detail?.year ?? seed?.year {
             parts.append(String(year))
-        }
-        if let runtime = detail?.runtimeLabel {
-            parts.append(runtime)
         }
         if let age = detail?.ageRating, !age.isEmpty {
             parts.append(age)
         }
-        if let creator = detail?.creator?.name, !creator.isEmpty {
-            parts.append("By \(creator)")
+        if let runtime = detail?.runtimeLabel {
+            parts.append(runtime)
+        }
+        if let type = detail?.type ?? seed?.type {
+            parts.append(type.replacingOccurrences(of: "_", with: " ").capitalized)
         }
         return parts.joined(separator: " · ")
     }
@@ -366,6 +367,18 @@ struct ContentDetailView: View {
             )
             ImagePrefetcher.prefetch([loaded.backdropCandidates])
             ImagePrefetcher.prefetchPosters(related)
+            // Warm episode thumbnails so the series strip is instant (e.g. Colour Me Blu).
+            let episodeThumbs = (loaded.seasons ?? []).flatMap { season in
+                (season.episodes ?? []).map {
+                    MediaURL.candidates(
+                        posterUrl: $0.thumbnailUrl,
+                        backdropUrl: nil,
+                        videoUrl: $0.videoUrl,
+                        preferBackdrop: true
+                    )
+                }
+            }
+            ImagePrefetcher.prefetch(episodeThumbs, preferPortrait: false)
             let list = try? await listReq
             inWatchlist = list?.contains(where: { $0.id == contentId }) ?? false
             resumePositionSeconds = (try? await progressReq)?.position ?? 0
@@ -429,16 +442,13 @@ private struct DetailHeroView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text(title)
-                    .font(.system(size: 34, weight: .heavy))
+                    .font(.system(size: 34, weight: .bold, design: .serif))
                     .foregroundStyle(.white)
                     .lineLimit(3)
                     .minimumScaleFactor(0.75)
 
                 if !meta.isEmpty {
-                    Text(meta)
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.75))
-                        .lineLimit(2)
+                    metaBadges
                 }
 
                 ratingRow
@@ -451,6 +461,30 @@ private struct DetailHeroView: View {
         .frame(maxWidth: .infinity)
         .frame(height: heroHeight)
         .clipped()
+    }
+
+    private var metaBadges: some View {
+        let parts = meta
+            .components(separatedBy: " · ")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(parts, id: \.self) { part in
+                    Text(part)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(0.14))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -546,6 +580,13 @@ private struct DetailBodySections: View {
     let seriesTitle: String
     let seriesContentId: String
     let contentType: String?
+    let category: String?
+    let year: Int?
+    let ageRating: String?
+    let language: String?
+    let country: String?
+    let runtimeLabel: String?
+    let creatorName: String?
     let related: [ContentItem]
     let crew: [CrewCredit]
     let btsVideos: [BtsVideo]
@@ -555,8 +596,11 @@ private struct DetailBodySections: View {
     let onSelectRelated: (ContentItem) -> Void
     let onSelectPerson: (PersonRoute) -> Void
 
+    @State private var relatedGlow = false
+    @State private var relatedGlowTask: Task<Void, Never>?
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
+        VStack(alignment: .leading, spacing: 32) {
             if !seasons.isEmpty {
                 DetailEpisodesSection(
                     seasons: seasons,
@@ -583,8 +627,37 @@ private struct DetailBodySections: View {
                 DetailCastSection(crew: crew, onSelect: onSelectPerson)
             }
 
+            DetailReleaseSection(
+                category: category,
+                year: year,
+                ageRating: ageRating,
+                language: language,
+                country: country,
+                runtimeLabel: runtimeLabel,
+                creatorName: creatorName,
+                contentType: contentType
+            )
+
             if !related.isEmpty {
-                DetailRelatedSection(items: related, onSelect: onSelectRelated)
+                DetailRelatedSection(
+                    items: related,
+                    glowActive: relatedGlow,
+                    onSelect: onSelectRelated,
+                    onScrollActivity: { active in
+                        relatedGlowTask?.cancel()
+                        if active {
+                            withAnimation(.easeOut(duration: 0.18)) { relatedGlow = true }
+                        } else {
+                            relatedGlowTask = Task {
+                                try? await Task.sleep(nanoseconds: 280_000_000)
+                                guard !Task.isCancelled else { return }
+                                await MainActor.run {
+                                    withAnimation(.easeOut(duration: 0.55)) { relatedGlow = false }
+                                }
+                            }
+                        }
+                    }
+                )
             }
 
             if !btsVideos.isEmpty {
@@ -693,7 +766,7 @@ private struct DetailAboutSection: View {
     let contentType: String?
     @State private var expanded = false
 
-    private let previewLimit = 180
+    private let previewLimit = 220
 
     private var needsExpansion: Bool { synopsis.count > previewLimit }
 
@@ -710,38 +783,121 @@ private struct DetailAboutSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("About")
-                .font(.title3.bold())
+                .font(.system(.title3, design: .rounded).weight(.bold))
                 .foregroundStyle(Theme.foreground)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 Text(title)
-                    .font(.headline)
+                    .font(.system(.title2, design: .serif).weight(.bold))
                     .foregroundStyle(.white)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 if let contentType, !contentType.isEmpty {
                     Text(contentType.replacingOccurrences(of: "_", with: " ").uppercased())
-                        .font(.caption.weight(.semibold))
-                        .tracking(1)
-                        .foregroundStyle(Theme.muted)
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .tracking(1.4)
+                        .foregroundStyle(Theme.accentGold)
                 }
+
                 Text(displayedText)
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineSpacing(3)
+                    .font(.system(.body, design: .default))
+                    .foregroundStyle(Color.white.opacity(0.82))
+                    .lineSpacing(5)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 if needsExpansion {
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
                     } label: {
-                        Text(expanded ? "LESS" : "MORE")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(Theme.muted)
+                        Text(expanded ? "Show less" : "Show more")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(16)
+            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.white.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.09), Color.white.opacity(0.04)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
+}
+
+private struct DetailReleaseSection: View {
+    let category: String?
+    let year: Int?
+    let ageRating: String?
+    let language: String?
+    let country: String?
+    let runtimeLabel: String?
+    let creatorName: String?
+    let contentType: String?
+
+    private var rows: [(String, String)] {
+        var list: [(String, String)] = []
+        if let contentType, !contentType.isEmpty {
+            list.append(("Type", contentType.replacingOccurrences(of: "_", with: " ").capitalized))
+        }
+        if let category, !category.isEmpty {
+            list.append(("Genre", category))
+        }
+        if let year {
+            list.append(("Released", String(year)))
+        }
+        if let ageRating, !ageRating.isEmpty {
+            list.append(("Rating", ageRating))
+        }
+        if let runtimeLabel, !runtimeLabel.isEmpty {
+            list.append(("Runtime", runtimeLabel))
+        }
+        if let language, !language.isEmpty {
+            list.append(("Language", language))
+        }
+        if let country, !country.isEmpty {
+            list.append(("Country", country))
+        }
+        if let creatorName, !creatorName.isEmpty {
+            list.append(("Creator", creatorName))
+        }
+        return list
+    }
+
+    var body: some View {
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Release Info")
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .foregroundStyle(Theme.foreground)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.0)
+                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                .foregroundStyle(Theme.muted)
+                                .frame(width: 88, alignment: .leading)
+                            Text(row.1)
+                                .font(.system(.body, design: .serif))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.vertical, 12)
+                        if idx < rows.count - 1 {
+                            Divider().overlay(Color.white.opacity(0.08))
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .background(Color.white.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
         }
     }
 }
@@ -762,43 +918,60 @@ private struct DetailEpisodesSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Menu {
-                ForEach(Array(seasons.enumerated()), id: \.element.stableId) { idx, season in
-                    Button("Season \(season.seasonNumber ?? idx + 1)") {
-                        selectedSeasonIndex = idx
+            HStack(alignment: .firstTextBaseline) {
+                Menu {
+                    ForEach(Array(seasons.enumerated()), id: \.element.stableId) { idx, season in
+                        Button("Season \(season.seasonNumber ?? idx + 1)") {
+                            selectedSeasonIndex = idx
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Season \(selectedSeason?.seasonNumber ?? 1)")
+                            .font(.title3.bold())
+                            .foregroundStyle(Theme.foreground)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Theme.muted)
                     }
                 }
-            } label: {
-                HStack(spacing: 6) {
-                    Text("Season \(selectedSeason?.seasonNumber ?? 1)")
-                        .font(.title3.bold())
-                        .foregroundStyle(Theme.foreground)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Theme.muted)
-                }
+
+                Spacer()
+
+                let episodeCount = selectedSeason?.episodes?.count ?? 0
+                Text(episodeCount == 1 ? "1 Episode" : "\(episodeCount) Episodes")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.muted)
             }
 
             if let season = selectedSeason {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 14) {
-                        ForEach(season.episodes ?? []) { episode in
-                            EpisodePosterCard(
-                                episode: episode,
-                                seasonNumber: season.seasonNumber ?? 1,
-                                downloadSpec: DownloadSpec(
-                                    contentId: seriesContentId,
-                                    episodeId: episode.id,
-                                    title: seriesTitle,
-                                    subtitle: "S\(season.seasonNumber ?? 1) E\(episode.episodeNumber ?? 0) · \(episode.title ?? "Episode")",
-                                    posterUrl: episode.thumbnailUrl,
-                                    type: contentType,
-                                    durationSeconds: episode.duration,
-                                    seasonNumber: season.seasonNumber,
-                                    episodeNumber: episode.episodeNumber
-                                ),
-                                onPlay: { onPlayEpisode(episode.id) }
-                            )
+                let episodes = season.episodes ?? []
+                if episodes.isEmpty {
+                    Text("Episodes for this season aren't available yet.")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.muted)
+                        .padding(.vertical, 8)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 14) {
+                            ForEach(episodes) { episode in
+                                EpisodePosterCard(
+                                    episode: episode,
+                                    seasonNumber: season.seasonNumber ?? 1,
+                                    downloadSpec: DownloadSpec(
+                                        contentId: seriesContentId,
+                                        episodeId: episode.id,
+                                        title: seriesTitle,
+                                        subtitle: "S\(season.seasonNumber ?? 1) E\(episode.episodeNumber ?? 0) · \(episode.title ?? "Episode")",
+                                        posterUrl: episode.thumbnailUrl,
+                                        type: contentType,
+                                        durationSeconds: episode.duration,
+                                        seasonNumber: season.seasonNumber,
+                                        episodeNumber: episode.episodeNumber
+                                    ),
+                                    onPlay: { onPlayEpisode(episode.id) }
+                                )
+                            }
                         }
                     }
                 }
@@ -868,12 +1041,14 @@ private struct EpisodePosterCard: View {
 
 private struct DetailRelatedSection: View {
     let items: [ContentItem]
+    var glowActive: Bool = false
     let onSelect: (ContentItem) -> Void
+    var onScrollActivity: ((Bool) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("More Like This")
-                .font(.title3.bold())
+                .font(.system(.title3, design: .rounded).weight(.bold))
                 .foregroundStyle(Theme.foreground)
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -882,24 +1057,18 @@ private struct DetailRelatedSection: View {
                         Button {
                             onSelect(item)
                         } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                PosterCard(item: item)
-                                Text(item.title)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.white)
-                                    .lineLimit(1)
-                                    .frame(width: 118, alignment: .leading)
-                                Text((item.type ?? "").replacingOccurrences(of: "_", with: " "))
-                                    .font(.caption2)
-                                    .foregroundStyle(Theme.muted)
-                                    .lineLimit(1)
-                                    .frame(width: 118, alignment: .leading)
-                            }
+                            PosterCard(item: item, glowActive: glowActive)
                         }
                         .buttonStyle(.plain)
                     }
                 }
+                .padding(.vertical, 10)
             }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { _ in onScrollActivity?(true) }
+                    .onEnded { _ in onScrollActivity?(false) }
+            )
         }
     }
 }
@@ -912,7 +1081,7 @@ private struct DetailCastSection: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Cast & Crew")
-                    .font(.title3.bold())
+                    .font(.system(.title3, design: .rounded).weight(.bold))
                     .foregroundStyle(Theme.foreground)
                 Spacer()
                 Text("\(crew.count) credited")

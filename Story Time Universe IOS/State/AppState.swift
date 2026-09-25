@@ -80,23 +80,29 @@ final class AppState: ObservableObject {
         let splashStarted = ContinuousClock.now
         // Long enough for the splash choreography to finish before dissolving out.
         let minimumSplash: Duration = .milliseconds(2600)
+        let offlineSplash: Duration = .milliseconds(900)
 
         // Offline-first: wait for real path status, then jump to downloads if needed.
         await network.waitForInitialPath()
         DownloadManager.shared.validateOfflineLibrary()
-        if !network.isOnline && !DownloadManager.shared.completedRecords.isEmpty {
-            await waitRemainingSplash(from: splashStarted, minimum: minimumSplash)
+        let hasDownloads = !DownloadManager.shared.completedRecords.isEmpty
+
+        if !network.isOnline && hasDownloads {
+            await waitRemainingSplash(from: splashStarted, minimum: offlineSplash)
             route = .offlineDownloads
             return
         }
 
         do {
-            let session = try await withTimeout(seconds: 10) {
+            // Fail fast when offline downloads exist — don't hang on waitsForConnectivity.
+            let session = try await withTimeout(seconds: hasDownloads ? 4 : 10) {
                 try await AuthService.shared.fetchSession()
             }
             self.session = session
             if session?.user != nil {
-                subscription = try? await ViewerAPI.shared.fetchSubscription()
+                subscription = try? await withTimeout(seconds: 4) {
+                    try await ViewerAPI.shared.fetchSubscription()
+                }
                 await syncParentalHintsFromSettings()
             }
             await waitRemainingSplash(from: splashStarted, minimum: minimumSplash)
@@ -106,26 +112,22 @@ final class AppState: ObservableObject {
                 if needsPaymentAttention {
                     presentPaywall(.subscribe)
                 }
-            } else if !DownloadManager.shared.completedRecords.isEmpty && !network.isOnline {
+            } else if hasDownloads && !network.isOnline {
                 route = .offlineDownloads
             } else {
                 route = .signIn
             }
         } catch {
             session = nil
-            bootstrapError = error.localizedDescription
-            await waitRemainingSplash(from: splashStarted, minimum: minimumSplash)
-            // Prefer offline library whenever we have playable downloads and session failed
-            // (airplane mode, captive portal, timeout, API down).
-            if !DownloadManager.shared.completedRecords.isEmpty,
-               !network.isOnline || (error as? APIError).map({
-                   if case .network = $0 { return true }
-                   return false
-               }) == true {
-                route = .offlineDownloads
-            } else if !DownloadManager.shared.completedRecords.isEmpty && !network.isOnline {
+            // Prefer offline library whenever we have playable downloads and the network
+            // path is dead / flaky / timed out — never leave the user stuck on splash.
+            if hasDownloads {
+                await waitRemainingSplash(from: splashStarted, minimum: offlineSplash)
+                bootstrapError = nil
                 route = .offlineDownloads
             } else {
+                bootstrapError = error.localizedDescription
+                await waitRemainingSplash(from: splashStarted, minimum: minimumSplash)
                 route = .signIn
             }
         }
@@ -261,6 +263,21 @@ final class AppState: ObservableObject {
         Task {
             await ViewerAPI.shared.reportSessionTelemetry()
             await syncParentalHintsFromSettings()
+        }
+        // Warm poster/backdrop caches immediately so Home feels instant.
+        Task(priority: .userInitiated) {
+            async let featured = ViewerAPI.shared.fetchContent(featured: true, limit: 12)
+            async let trending = ViewerAPI.shared.fetchContent(limit: 24)
+            async let continueWatching = ViewerAPI.shared.fetchContinueWatching()
+            let featuredItems = (try? await featured) ?? []
+            let trendingItems = (try? await trending) ?? []
+            let cw = (try? await continueWatching) ?? []
+            ImagePrefetcher.prefetchHome(
+                featured: featuredItems,
+                continueWatching: cw,
+                trending: trendingItems,
+                catalogRows: []
+            )
         }
     }
 
