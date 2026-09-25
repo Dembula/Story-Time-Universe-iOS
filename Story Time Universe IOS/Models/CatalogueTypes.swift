@@ -2,7 +2,7 @@ import Foundation
 
 /// Mirrors Story Time Production `src/lib/content-types.ts` (commit 34d2d13+).
 /// Home rows fill as creators upload — no app update needed for these known types.
-enum CatalogueTypes {
+nonisolated enum CatalogueTypes {
     struct RowDefinition: Identifiable, Hashable {
         let id: String
         /// One or more API `Content.type` values (Comedy = skits + stand-up, like web).
@@ -272,7 +272,7 @@ enum CatalogueTypes {
 }
 
 /// Home chrome filter: all catalogue, a content type, or a genre across types.
-enum HomeBrowseFilter: Equatable, Hashable {
+nonisolated enum HomeBrowseFilter: Equatable, Hashable {
     case all
     case contentType(id: String, title: String, typeValues: [String])
     case genre(String)
@@ -286,7 +286,7 @@ enum HomeBrowseFilter: Equatable, Hashable {
     }
 }
 
-struct CatalogueListRequest: Identifiable, Hashable {
+nonisolated struct CatalogueListRequest: Identifiable, Hashable {
     let id: String
     let title: String
     var typeValues: [String] = []
@@ -304,7 +304,7 @@ struct CatalogueListRequest: Identifiable, Hashable {
     }
 }
 
-struct HomeCatalogRow: Identifiable, Hashable {
+nonisolated struct HomeCatalogRow: Identifiable, Hashable {
     let id: String
     let typeValue: String
     let title: String

@@ -1,6 +1,6 @@
 import Foundation
 
-enum APIError: LocalizedError {
+nonisolated enum APIError: LocalizedError {
     case invalidURL
     case unauthorized
     case paymentRequired(String)

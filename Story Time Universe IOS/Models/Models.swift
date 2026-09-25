@@ -1,6 +1,6 @@
 import Foundation
 
-struct SessionUser: Codable, Equatable {
+nonisolated struct SessionUser: Codable, Equatable {
     let id: String?
     let name: String?
     let email: String?
@@ -8,12 +8,12 @@ struct SessionUser: Codable, Equatable {
     let role: String?
 }
 
-struct AuthSession: Codable, Equatable {
+nonisolated struct AuthSession: Codable, Equatable {
     let user: SessionUser?
     let expires: String?
 }
 
-struct ViewerProfile: Codable, Identifiable, Equatable, Hashable {
+nonisolated struct ViewerProfile: Codable, Identifiable, Equatable, Hashable {
     let id: String
     let name: String
     let age: Int
@@ -30,11 +30,11 @@ struct ViewerProfile: Codable, Identifiable, Equatable, Hashable {
     }
 }
 
-struct ProfilesResponse: Codable {
+nonisolated struct ProfilesResponse: Codable {
     let profiles: [ViewerProfile]
 }
 
-struct ActiveProfileResponse: Codable {
+nonisolated struct ActiveProfileResponse: Codable {
     let profile: ViewerProfile?
     let ok: Bool?
     let error: String?
@@ -42,7 +42,7 @@ struct ActiveProfileResponse: Codable {
     let paymentRequired: Bool?
 }
 
-struct ContentItem: Codable, Identifiable, Hashable {
+nonisolated struct ContentItem: Codable, Identifiable, Hashable {
     let id: String
     let title: String
     let description: String?
@@ -211,7 +211,7 @@ struct ContentItem: Codable, Identifiable, Hashable {
     }
 }
 
-struct ContinueWatchingItem: Codable, Identifiable, Hashable {
+nonisolated struct ContinueWatchingItem: Codable, Identifiable, Hashable {
     let id: String
     let title: String
     let description: String?
@@ -279,18 +279,18 @@ struct ContinueWatchingItem: Codable, Identifiable, Hashable {
     }
 }
 
-struct CreatorInfo: Codable, Hashable {
+nonisolated struct CreatorInfo: Codable, Hashable {
     let id: String?
     let name: String?
     let image: String?
 }
 
-struct RatingStats: Codable, Hashable {
+nonisolated struct RatingStats: Codable, Hashable {
     let average: Double?
     let count: Int?
 }
 
-struct Episode: Codable, Identifiable, Hashable {
+nonisolated struct Episode: Codable, Identifiable, Hashable {
     let id: String
     let title: String?
     let description: String?
@@ -333,7 +333,7 @@ struct Episode: Codable, Identifiable, Hashable {
     }
 }
 
-struct Season: Codable, Hashable {
+nonisolated struct Season: Codable, Hashable {
     let id: String?
     let seasonNumber: Int?
     let title: String?
@@ -388,7 +388,7 @@ struct Season: Codable, Hashable {
 }
 
 /// Minimal JSON value used only to advance past bad episode entries.
-private enum LossyJSONValue: Decodable {
+nonisolated private enum LossyJSONValue: Decodable {
     case null
     case bool
     case number
@@ -424,7 +424,7 @@ private enum LossyJSONValue: Decodable {
     }
 }
 
-struct BtsVideo: Codable, Identifiable, Hashable {
+nonisolated struct BtsVideo: Codable, Identifiable, Hashable {
     let id: String
     let title: String?
     let videoUrl: String?
@@ -435,7 +435,7 @@ struct BtsVideo: Codable, Identifiable, Hashable {
     }
 }
 
-struct CrewCredit: Codable, Identifiable, Hashable {
+nonisolated struct CrewCredit: Codable, Identifiable, Hashable {
     let id: String
     let name: String
     let role: String?
@@ -449,7 +449,7 @@ struct CrewCredit: Codable, Identifiable, Hashable {
     }
 }
 
-struct ContentDetail: Codable, Identifiable, Hashable {
+nonisolated struct ContentDetail: Codable, Identifiable, Hashable {
     let id: String
     let title: String
     let description: String?
@@ -608,12 +608,12 @@ struct ContentDetail: Codable, Identifiable, Hashable {
     }
 }
 
-struct PlaybackSource: Codable, Hashable {
+nonisolated struct PlaybackSource: Codable, Hashable {
     let src: String?
     let type: String?
 }
 
-struct SubtitleTrack: Codable, Identifiable, Hashable {
+nonisolated struct SubtitleTrack: Codable, Identifiable, Hashable {
     let id: String
     let language: String?
     let label: String?
@@ -646,7 +646,7 @@ struct SubtitleTrack: Codable, Identifiable, Hashable {
     }
 }
 
-struct PlaybackBundle: Codable, Hashable {
+nonisolated struct PlaybackBundle: Codable, Hashable {
     let id: String?
     let title: String?
     let playback: PlaybackSource?
@@ -661,17 +661,17 @@ struct PlaybackBundle: Codable, Hashable {
     }
 }
 
-struct WatchlistItem: Codable, Hashable {
+nonisolated struct WatchlistItem: Codable, Hashable {
     let id: String?
     let contentId: String?
     let content: ContentItem?
 }
 
-struct SearchResponse: Codable {
+nonisolated struct SearchResponse: Codable {
     let results: [SearchResult]
 }
 
-struct SearchResult: Codable, Identifiable, Hashable {
+nonisolated struct SearchResult: Codable, Identifiable, Hashable {
     let id: String
     let title: String
     let type: String?
@@ -720,7 +720,7 @@ extension ContentItem {
     }
 }
 
-struct AISearchPayload: Codable {
+nonisolated struct AISearchPayload: Codable {
     let results: [SearchResult]?
     let items: [SearchResult]?
     let reasoning: String?
@@ -731,7 +731,7 @@ struct AISearchPayload: Codable {
     var resolvedReasoning: String? { reasoning ?? explanation }
 }
 
-struct AISearchResult: Hashable {
+nonisolated struct AISearchResult: Hashable {
     let results: [SearchResult]
     let reasoning: String?
     let suggestions: [String]
@@ -760,13 +760,13 @@ struct AISearchResult: Hashable {
     }
 }
 
-struct AISearchSection: Hashable, Identifiable {
+nonisolated struct AISearchSection: Hashable, Identifiable {
     var id: String { title }
     let title: String
     let results: [SearchResult]
 }
 
-struct ViewerSubscription: Codable, Hashable {
+nonisolated struct ViewerSubscription: Codable, Hashable {
     let id: String?
     let plan: String?
     let status: String?
@@ -777,11 +777,11 @@ struct ViewerSubscription: Codable, Hashable {
     let cancelAtPeriodEnd: Bool?
 }
 
-struct SubscriptionResponse: Codable {
+nonisolated struct SubscriptionResponse: Codable {
     let subscription: ViewerSubscription?
 }
 
-struct APIErrorBody: Codable {
+nonisolated struct APIErrorBody: Codable {
     let error: String?
     let requiresPin: Bool?
     let paymentRequired: Bool?
@@ -789,7 +789,7 @@ struct APIErrorBody: Codable {
 
 // MARK: - Person / credits (matches web PersonPreview)
 
-struct PersonPreview: Codable, Identifiable, Hashable {
+nonisolated struct PersonPreview: Codable, Identifiable, Hashable {
     var id: String { personId }
     let personId: String
     let displayName: String
@@ -819,14 +819,14 @@ struct PersonPreview: Codable, Identifiable, Hashable {
     }
 }
 
-struct PersonLatestProject: Codable, Hashable {
+nonisolated struct PersonLatestProject: Codable, Hashable {
     let id: String
     let title: String
     let type: String?
     let posterUrl: String?
 }
 
-struct PersonCredit: Codable, Identifiable, Hashable {
+nonisolated struct PersonCredit: Codable, Identifiable, Hashable {
     var id: String { "\(contentId)-\(role)" }
     let contentId: String
     let title: String
@@ -860,7 +860,7 @@ struct PersonCredit: Codable, Identifiable, Hashable {
 }
 
 /// Navigation payload when tapping a cast/crew credit.
-struct PersonRoute: Hashable, Identifiable {
+nonisolated struct PersonRoute: Hashable, Identifiable {
     var id: String { personId ?? crewMemberId ?? fallbackName }
     var personId: String?
     var crewMemberId: String?

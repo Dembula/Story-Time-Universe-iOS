@@ -1,6 +1,6 @@
 import Foundation
 
-enum MediaURL {
+nonisolated enum MediaURL {
     /// Ordered image candidates — callers should try until one loads.
     static func candidates(
         posterUrl: String?,

@@ -2,7 +2,7 @@ import Foundation
 
 /// App Store product identifiers — create matching auto-renewable / consumable
 /// products in App Store Connect with these exact IDs before submitting for review.
-enum StoreProducts {
+nonisolated enum StoreProducts {
     // MARK: Auto-renewable subscriptions (subscription group: Story Time Universe)
 
     static let baseMonthly = "com.storytime.universe.sub.base.monthly"
@@ -75,7 +75,7 @@ enum StoreProducts {
 }
 
 /// Why the paywall is shown — controls copy and post-purchase navigation.
-enum PaywallContext: Equatable {
+nonisolated enum PaywallContext: Equatable {
     case subscribe
     case reactivate
     case changePlan

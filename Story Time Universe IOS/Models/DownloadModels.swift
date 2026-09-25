@@ -1,6 +1,6 @@
 import Foundation
 
-enum DownloadState: String, Codable, Hashable {
+nonisolated enum DownloadState: String, Codable, Hashable {
     case queued
     case downloading
     case completed
@@ -11,7 +11,7 @@ enum DownloadState: String, Codable, Hashable {
 /// Metadata for an offline download. The media itself lives in the app's private
 /// container (an iOS-managed `.movpkg` for HLS, or a sandboxed file for progressive
 /// video) — never in the Files app and never exportable.
-struct DownloadRecord: Codable, Identifiable, Hashable {
+nonisolated struct DownloadRecord: Codable, Identifiable, Hashable {
     let key: String
     let contentId: String
     let episodeId: String?
@@ -71,7 +71,7 @@ struct DownloadRecord: Codable, Identifiable, Hashable {
 }
 
 /// A single item in an in-player "up next" queue (series episodes).
-struct EpisodePlaybackInfo: Identifiable, Hashable {
+nonisolated struct EpisodePlaybackInfo: Identifiable, Hashable {
     let id: String
     let episodeId: String
     let title: String
@@ -90,7 +90,7 @@ struct EpisodePlaybackInfo: Identifiable, Hashable {
 }
 
 /// Everything needed to begin a download without re-fetching content metadata.
-struct DownloadSpec: Hashable {
+nonisolated struct DownloadSpec: Hashable {
     let contentId: String
     let episodeId: String?
     let title: String

@@ -1,6 +1,6 @@
 import Foundation
 
-enum AppConfig {
+nonisolated enum AppConfig {
     /// Production API / viewer origin.
     static let webBaseURL = URL(string: "https://story-time.online")!
     static let apiBaseURL = webBaseURL

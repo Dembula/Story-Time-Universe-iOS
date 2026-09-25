@@ -1,7 +1,7 @@
 import Foundation
 
 /// Result of `POST /api/viewer/ppv` — unlock a title for Pay Per View accounts.
-struct PpvCheckoutResponse: Codable, Hashable {
+nonisolated struct PpvCheckoutResponse: Codable, Hashable {
     let success: Bool?
     let requiresPayment: Bool?
     let alreadyOwned: Bool?
@@ -14,7 +14,7 @@ struct PpvCheckoutResponse: Codable, Hashable {
     }
 }
 
-enum TitleAccessResult: Equatable {
+nonisolated enum TitleAccessResult: Equatable {
     /// Stream / player may start.
     case playable
     /// Title requires a StoreKit consumable unlock (no external checkout in-app).

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Response from production `GET /api/viewer/settings` (account summary mirror of the web settings page).
-struct ViewerSettingsResponse: Codable, Hashable {
+nonisolated struct ViewerSettingsResponse: Codable, Hashable {
     let account: ViewerAccountDetails?
     let address: ViewerAddressDetails?
     let preferences: ViewerPreferenceDetails?
@@ -12,14 +12,14 @@ struct ViewerSettingsResponse: Codable, Hashable {
     let warnings: [String]?
 }
 
-struct ViewerAccountDetails: Codable, Hashable {
+nonisolated struct ViewerAccountDetails: Codable, Hashable {
     let name: String?
     let email: String?
     let phoneNumber: String?
     let onboardingComplete: Bool?
 }
 
-struct ViewerAddressDetails: Codable, Hashable {
+nonisolated struct ViewerAddressDetails: Codable, Hashable {
     let residentialAddress: String?
     let city: String?
     let provinceState: String?
@@ -46,7 +46,7 @@ struct ViewerAddressDetails: Codable, Hashable {
     }
 }
 
-struct ViewerPreferenceDetails: Codable, Hashable {
+nonisolated struct ViewerPreferenceDetails: Codable, Hashable {
     let notifyEmail: Bool?
     let playbackQuality: String?
     /// Optional parental maturity hints from web settings (PIN remains device-local).
@@ -59,14 +59,14 @@ struct ViewerPreferenceDetails: Codable, Hashable {
     }
 }
 
-struct ViewerPaymentMethodDetails: Codable, Hashable, Identifiable {
+nonisolated struct ViewerPaymentMethodDetails: Codable, Hashable, Identifiable {
     let id: String
     let label: String?
     let lastFour: String?
     let isDefault: Bool?
 }
 
-struct ViewerSettingsProfile: Codable, Hashable, Identifiable {
+nonisolated struct ViewerSettingsProfile: Codable, Hashable, Identifiable {
     let id: String
     let name: String?
     let age: Int?
@@ -74,7 +74,7 @@ struct ViewerSettingsProfile: Codable, Hashable, Identifiable {
     let pinEnabled: Bool?
 }
 
-struct ViewerSettingsSubscription: Codable, Hashable {
+nonisolated struct ViewerSettingsSubscription: Codable, Hashable {
     let id: String?
     let plan: String?
     let viewerModel: String?
