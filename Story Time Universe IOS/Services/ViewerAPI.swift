@@ -465,25 +465,36 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
                     if let payload = try? api.decode(AISearchPayload.self, from: data) {
                         let results = payload.resolvedResults
                         if !results.isEmpty || payload.resolvedReasoning != nil || !(payload.suggestions ?? []).isEmpty {
+                            // Weak / off-genre remote payloads fall through to local honesty.
+                            let intent = Self.detectSearchIntent(q)
+                            if !Self.fulfillsIntent(results, intent: intent, prompt: q) {
+                                break
+                            }
                             var suggestions = payload.suggestions ?? []
                             if suggestions.isEmpty {
                                 suggestions = Self.contextualSuggestions(for: q, results: results)
                             }
+                            let trimmed = Array(results.prefix(limit))
                             return AISearchResult(
-                                results: Array(results.prefix(limit)),
+                                results: trimmed,
                                 reasoning: payload.resolvedReasoning
                                     ?? Self.buildAIReport(
                                         prompt: q,
-                                        results: results,
+                                        results: trimmed,
                                         searchLenses: Self.expandPromptTerms(q),
                                         usedRemoteAI: true
                                     ),
                                 suggestions: suggestions,
-                                usedFallback: false
+                                usedFallback: false,
+                                sections: Self.buildResultSections(trimmed, intent: intent)
                             )
                         }
                     }
                     if let search = try? api.decode(SearchResponse.self, from: data), !search.results.isEmpty {
+                        let intent = Self.detectSearchIntent(q)
+                        if !Self.fulfillsIntent(search.results, intent: intent, prompt: q) {
+                            continue
+                        }
                         return AISearchResult(
                             results: Array(search.results.prefix(limit)),
                             reasoning: Self.buildAIReport(
@@ -493,7 +504,8 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
                                 usedRemoteAI: true
                             ),
                             suggestions: Self.contextualSuggestions(for: q, results: search.results),
-                            usedFallback: false
+                            usedFallback: false,
+                            sections: Self.buildResultSections(Array(search.results.prefix(limit)), intent: intent)
                         )
                     }
                 } catch {
@@ -517,6 +529,10 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
                 guard (200...299).contains(response.statusCode) else { continue }
                 if let payload = try? api.decode(AISearchPayload.self, from: data),
                    !payload.resolvedResults.isEmpty {
+                    let intent = Self.detectSearchIntent(q)
+                    if !Self.fulfillsIntent(payload.resolvedResults, intent: intent, prompt: q) {
+                        continue
+                    }
                     return AISearchResult(
                         results: Array(payload.resolvedResults.prefix(limit)),
                         reasoning: payload.resolvedReasoning ?? Self.buildAIReport(
@@ -526,7 +542,8 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
                             usedRemoteAI: true
                         ),
                         suggestions: payload.suggestions ?? Self.contextualSuggestions(for: q, results: payload.resolvedResults),
-                        usedFallback: false
+                        usedFallback: false,
+                        sections: Self.buildResultSections(Array(payload.resolvedResults.prefix(limit)), intent: intent)
                     )
                 }
             } catch {
@@ -538,7 +555,9 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
     }
 
     /// Multi-term browse search + catalogue vibe scoring so prompts still return useful picks.
+    /// When the user asks for a genre/mood we don't carry, we say so instead of padding random titles.
     private func enhancedAIFallback(query: String, limit: Int) async throws -> AISearchResult {
+        let intent = Self.detectSearchIntent(query)
         let expansions = Self.expandPromptTerms(query)
         var combined: [SearchResult] = []
         var seen = Set<String>()
@@ -551,37 +570,119 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
             if combined.count >= limit * 2 { break }
         }
 
-        // Score against a wider catalogue sample for vibe prompts that don't keyword-match titles.
-        let catalogue = (try? await fetchContent(limit: 60)) ?? []
-        let vibeHits = catalogue
-            .map(\.asSearchResult)
-            .filter { seen.insert($0.id).inserted }
-            .filter { Self.vibeScore($0, prompt: query) > 0 }
-            .sorted { Self.vibeScore($0, prompt: query) > Self.vibeScore($1, prompt: query) }
+        let catalogue = (try? await fetchContent(limit: 80)) ?? []
+        let catalogueResults = catalogue.map(\.asSearchResult)
+        for item in catalogueResults where seen.insert(item.id).inserted {
+            combined.append(item)
+        }
 
-        combined.append(contentsOf: vibeHits)
-        let ranked = Self.rankSearchResults(combined, query: query)
-            .sorted {
-                let sa = Self.vibeScore($0, prompt: query) + Self.tokenScore($0, query: query)
-                let sb = Self.vibeScore($1, prompt: query) + Self.tokenScore($1, query: query)
-                return sa > sb
+        let scored = combined.map { item -> (SearchResult, Int) in
+            let score = Self.vibeScore(item, prompt: query) + Self.tokenScore(item, query: query)
+            return (item, score)
+        }
+        .sorted { $0.1 > $1.1 }
+
+        let threshold = intent.isSpecific ? 3 : 1
+        let strong = scored.filter { $0.1 >= threshold }.map(\.0)
+        let availableGenres = CatalogueTypes.populatedGenres(from: catalogue)
+        let fulfilled = Self.fulfillsIntent(strong, intent: intent, prompt: query)
+
+        // Honest path: specific ask with no real genre/mood matches.
+        if intent.isSpecific, !fulfilled {
+            let adjacent = Self.adjacentAvailableResults(
+                intent: intent,
+                catalogue: catalogueResults,
+                availableGenres: availableGenres,
+                limit: min(8, limit)
+            )
+            let report = Self.buildHonestMissReport(
+                prompt: query,
+                intent: intent,
+                availableGenres: availableGenres,
+                adjacent: adjacent
+            )
+            let suggestions = Self.honestSuggestions(
+                intent: intent,
+                availableGenres: availableGenres,
+                adjacent: adjacent
+            )
+            let sections: [AISearchSection]
+            if adjacent.isEmpty {
+                sections = []
+            } else {
+                sections = [
+                    AISearchSection(title: "Closest on Story Time", results: adjacent),
+                ]
             }
+            return AISearchResult(
+                results: adjacent,
+                reasoning: report,
+                suggestions: suggestions,
+                usedFallback: true,
+                sections: sections,
+                unmetIntent: true
+            )
+        }
 
-        let final = Array(ranked.prefix(limit))
+        let genreMatched: [SearchResult]
+        if let primary = intent.primaryGenre {
+            genreMatched = strong.filter { Self.matchesGenre($0, genre: primary) }
+        } else {
+            genreMatched = strong
+        }
+        let final = Array((genreMatched.isEmpty ? (strong.isEmpty ? scored.map(\.0) : strong) : genreMatched).prefix(limit))
+        let sections = Self.buildResultSections(final, intent: intent)
         let suggestions = Self.contextualSuggestions(for: query, results: final)
         let report = Self.buildAIReport(
             prompt: query,
             results: final,
             searchLenses: expansions,
-            usedRemoteAI: false
+            usedRemoteAI: false,
+            intent: intent,
+            unmetIntent: false
         )
 
         return AISearchResult(
             results: final,
             reasoning: report,
             suggestions: suggestions,
-            usedFallback: true
+            usedFallback: true,
+            sections: sections,
+            unmetIntent: false
         )
+    }
+
+    /// True when results honestly answer the ask — genre queries need real genre hits, not adjacent filler.
+    nonisolated private static func fulfillsIntent(
+        _ results: [SearchResult],
+        intent: SearchIntent,
+        prompt: String
+    ) -> Bool {
+        guard intent.isSpecific else {
+            return !results.isEmpty
+        }
+        let strong = results.filter {
+            vibeScore($0, prompt: prompt) + tokenScore($0, query: prompt) >= 3
+        }
+        guard !strong.isEmpty else { return false }
+
+        if let primary = intent.primaryGenre {
+            return strong.contains { matchesGenre($0, genre: primary) }
+        }
+        // Mood-only asks: vibe/token threshold is enough.
+        return true
+    }
+
+    nonisolated private static func matchesGenre(_ result: SearchResult, genre: String) -> Bool {
+        let target = genre.lowercased()
+        if let canon = CatalogueTypes.canonicalGenre(from: result.category),
+           canon.lowercased() == target {
+            return true
+        }
+        let hay = [result.category, result.type, result.title]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+        return hay.contains(target)
     }
 
     /// Narrative “what I think” report so the UI feels like AI, not keyword search.
@@ -589,55 +690,241 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
         prompt: String,
         results: [SearchResult],
         searchLenses: [String],
-        usedRemoteAI: Bool
+        usedRemoteAI: Bool,
+        intent: SearchIntent? = nil,
+        unmetIntent: Bool = false
     ) -> String {
+        let resolvedIntent = intent ?? detectSearchIntent(prompt)
+        if unmetIntent {
+            return buildHonestMissReport(
+                prompt: prompt,
+                intent: resolvedIntent,
+                availableGenres: [],
+                adjacent: results
+            )
+        }
+
         let moods = interpretMood(prompt)
         var parts: [String] = []
 
-        parts.append("You said: \"\(prompt)\".")
-
         if moods.isEmpty {
-            parts.append("I'm treating that as a free-form brief — looking across titles, genres, and tones in the Story Time catalogue.")
-        } else {
-            parts.append("Here's how I'm reading it: \(moods.joined(separator: "; ")).")
-        }
-
-        let lenses = searchLenses
-            .filter { $0.caseInsensitiveCompare(prompt) != .orderedSame }
-            .prefix(5)
-        if !lenses.isEmpty {
-            parts.append("So I searched for vibes like \(lenses.map { "\"\($0)\"" }.joined(separator: ", ")).")
-        }
-
-        if results.isEmpty {
-            parts.append("I couldn't find a strong match yet. Try a clearer mood (comedy, thriller, cozy) or a genre word — I'll rethink it.")
-        } else {
-            let top = results.prefix(3)
-            let highlights = top.map { item -> String in
-                let meta = [item.category, item.type]
-                    .compactMap { $0 }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " · ")
-                if meta.isEmpty {
-                    return "• \(item.title)"
-                }
-                return "• \(item.title) (\(meta)) — fits this brief"
-            }.joined(separator: "\n")
-
-            parts.append("My top picks for you:\n\(highlights)")
-
-            if results.count > 3 {
-                parts.append("Plus \(results.count - 3) more below that lean the same way.")
-            } else {
-                parts.append("Tap any title to open it.")
+            parts.append("Got it — looking across Story Time for titles that fit \"\(prompt)\".")
+        } else if let first = moods.first {
+            let lead = first.prefix(1).uppercased() + first.dropFirst()
+            parts.append("\(lead).")
+            if moods.count > 1 {
+                parts.append("Also picking up: \(moods.dropFirst().joined(separator: "; ")).")
             }
         }
 
-        if !usedRemoteAI {
-            parts.append("Tip: the more specific the mood, the better my next round will be.")
+        if results.isEmpty {
+            parts.append("I couldn't find a strong match in the catalogue yet. Try another mood or genre word and I'll rethink it.")
+        } else {
+            let topTitles = results.prefix(3).map(\.title).joined(separator: ", ")
+            parts.append("Here are the picks that fit best right now — starting with \(topTitles).")
         }
 
         return parts.joined(separator: "\n\n")
+    }
+
+    nonisolated static func buildHonestMissReport(
+        prompt: String,
+        intent: SearchIntent,
+        availableGenres: [String],
+        adjacent: [SearchResult]
+    ) -> String {
+        let asked = intent.displayLabel
+        var parts: [String] = []
+
+        if let asked {
+            parts.append("I looked for \(asked) on Story Time, but we don't have that lane populated yet.")
+        } else {
+            parts.append("I understood \"\(prompt)\", but nothing in the catalogue matches that vibe closely enough to recommend honestly.")
+        }
+
+        if !availableGenres.isEmpty {
+            let sample = availableGenres.prefix(4).joined(separator: ", ")
+            parts.append("What we do have right now includes \(sample)\(availableGenres.count > 4 ? ", and more" : "").")
+        }
+
+        if !adjacent.isEmpty {
+            parts.append("If you want, here are the closest titles we can offer instead — not a perfect match, but nearby in tone.")
+        } else {
+            parts.append("Ask for one of the genres we carry, or describe a different mood, and I'll try again.")
+        }
+
+        return parts.joined(separator: "\n\n")
+    }
+
+    nonisolated struct SearchIntent: Hashable {
+        var genres: [String]
+        var moods: [String]
+        var isSpecific: Bool { !genres.isEmpty || !moods.isEmpty }
+
+        var displayLabel: String? {
+            if let g = genres.first { return g.lowercased() }
+            if let m = moods.first { return m.lowercased() }
+            return nil
+        }
+
+        var primaryGenre: String? { genres.first }
+    }
+
+    nonisolated static func detectSearchIntent(_ prompt: String) -> SearchIntent {
+        let q = prompt.lowercased()
+        var genres: [String] = []
+        var moods: [String] = []
+
+        let genreMap: [(needles: [String], label: String)] = [
+            (["horror", "scary", "creepy", "spooky", "terror", "haunt"], "Horror"),
+            (["thriller", "suspense", "edge of my seat"], "Thriller"),
+            (["comedy", "funny", "laugh", "humor", "humour", "hilarious"], "Comedy"),
+            (["documentary", "doc ", "true story", "nonfiction", "non-fiction"], "Documentary"),
+            (["romance", "romantic", "love story", "date night"], "Romance"),
+            (["action", "explosive", "fight"], "Action"),
+            (["drama"], "Drama"),
+            (["sci-fi", "scifi", "science fiction", "sci fi"], "Sci-Fi"),
+            (["family", "kids", "children"], "Family"),
+            (["animation", "animated", "cartoon"], "Animation"),
+            (["sports", "football", "soccer", "rugby"], "Sports"),
+            (["music", "concert", "musical"], "Music"),
+            (["crime", "heist", "detective"], "Crime"),
+            (["mystery"], "Mystery"),
+            (["fantasy"], "Fantasy"),
+            (["western"], "Western"),
+            (["war "], "War"),
+            (["reality"], "Reality"),
+            (["podcast"], "Podcast"),
+            (["stand-up", "standup", "stand up"], "Stand-Up"),
+        ]
+
+        for entry in genreMap where entry.needles.contains(where: { q.contains($0) }) {
+            if !genres.contains(entry.label) { genres.append(entry.label) }
+        }
+
+        if q.contains("cozy") || q.contains("comfort") || q.contains("rainy") || q.contains("chill") {
+            moods.append("something cozy / comforting")
+        }
+        if q.contains("feel-good") || q.contains("feel good") || q.contains("wholesome") {
+            moods.append("feel-good energy")
+        }
+        if q.contains("late night") || q.contains("intense") || q.contains("gritty") {
+            moods.append("late-night intensity")
+        }
+        if q.contains("quick") || q.contains("short") || q.contains("under an hour") {
+            moods.append("a quicker watch")
+        }
+
+        return SearchIntent(genres: genres, moods: moods)
+    }
+
+    nonisolated private static func adjacentAvailableResults(
+        intent: SearchIntent,
+        catalogue: [SearchResult],
+        availableGenres: [String],
+        limit: Int
+    ) -> [SearchResult] {
+        let neighbors: [String: [String]] = [
+            "Horror": ["Thriller", "Mystery", "Crime", "Drama"],
+            "Thriller": ["Crime", "Mystery", "Drama", "Action"],
+            "Comedy": ["Family", "Romance", "Animation"],
+            "Romance": ["Drama", "Comedy"],
+            "Action": ["Adventure", "Thriller", "Sports"],
+            "Documentary": ["Educational", "Sports", "News"],
+            "Sci-Fi": ["Fantasy", "Action", "Thriller"],
+            "Family": ["Animation", "Comedy"],
+        ]
+
+        var preferred = intent.genres.flatMap { neighbors[$0] ?? [] }
+        preferred.append(contentsOf: availableGenres.prefix(6))
+
+        var scored: [(SearchResult, Int)] = []
+        for item in catalogue {
+            let hay = [item.category, item.type, item.title]
+                .compactMap { $0?.lowercased() }
+                .joined(separator: " ")
+            var score = 0
+            for genre in preferred {
+                if hay.contains(genre.lowercased()) { score += 5 }
+            }
+            // Soft mood adjacency only — never dump random catalogue filler.
+            if intent.moods.contains(where: { $0.contains("cozy") }) || intent.moods.contains(where: { $0.contains("feel-good") }) {
+                if hay.contains("comedy") || hay.contains("family") || hay.contains("drama") { score += 2 }
+            }
+            if score > 0 { scored.append((item, score)) }
+        }
+
+        return Array(
+            scored
+                .sorted { $0.1 > $1.1 }
+                .map(\.0)
+                .prefix(limit)
+        )
+    }
+
+    nonisolated private static func honestSuggestions(
+        intent: SearchIntent,
+        availableGenres: [String],
+        adjacent: [SearchResult]
+    ) -> [String] {
+        var out: [String] = []
+        var seen = Set<String>()
+        func add(_ s: String) {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard t.count >= 2, seen.insert(t.lowercased()).inserted else { return }
+            out.append(t)
+        }
+
+        for genre in availableGenres.prefix(4) {
+            add("Show me \(genre.lowercased())")
+        }
+        if !adjacent.isEmpty {
+            add("Show me those closest picks")
+        }
+        add("Something feel-good")
+        add("Family night picks")
+        if intent.primaryGenre != nil {
+            add("Notify me when that genre arrives")
+        }
+        return Array(out.prefix(6))
+    }
+
+    nonisolated private static func buildResultSections(
+        _ results: [SearchResult],
+        intent: SearchIntent
+    ) -> [AISearchSection] {
+        guard !results.isEmpty else { return [] }
+        var sections: [AISearchSection] = [
+            AISearchSection(title: "Top Results", results: Array(results.prefix(8))),
+        ]
+
+        var byLane: [String: [SearchResult]] = [:]
+        for item in results {
+            let lane = CatalogueTypes.canonicalGenre(from: item.category)
+                ?? item.type.map { CatalogueTypes.pluralLabels[$0.uppercased()] ?? $0.replacingOccurrences(of: "_", with: " ").capitalized }
+                ?? "More picks"
+            byLane[lane, default: []].append(item)
+        }
+
+        let preferredOrder = intent.genres + intent.moods.map { _ in "More picks" }
+        let orderedKeys = byLane.keys.sorted { a, b in
+            let ai = preferredOrder.firstIndex(of: a) ?? 100
+            let bi = preferredOrder.firstIndex(of: b) ?? 100
+            if ai != bi { return ai < bi }
+            return a < b
+        }
+
+        for key in orderedKeys {
+            guard let items = byLane[key], items.count >= 2 else { continue }
+            if key == "Top Results" { continue }
+            let trimmed = Array(items.prefix(8))
+            // Avoid duplicating the exact same Top Results strip.
+            if trimmed.map(\.id) == sections.first?.results.prefix(trimmed.count).map(\.id) { continue }
+            sections.append(AISearchSection(title: key, results: trimmed))
+            if sections.count >= 4 { break }
+        }
+
+        return sections
     }
 
     nonisolated private static func interpretMood(_ prompt: String) -> [String] {
@@ -734,7 +1021,7 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
         results.sorted { tokenScore($0, query: query) > tokenScore($1, query: query) }
     }
 
-    private static func tokenScore(_ result: SearchResult, query: String) -> Int {
+    nonisolated private static func tokenScore(_ result: SearchResult, query: String) -> Int {
         let tokens = query.lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .map(String.init)
@@ -755,7 +1042,7 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
         }
     }
 
-    private static func vibeScore(_ result: SearchResult, prompt: String) -> Int {
+    nonisolated private static func vibeScore(_ result: SearchResult, prompt: String) -> Int {
         let p = prompt.lowercased()
         let hay = [
             result.title,
@@ -769,8 +1056,11 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
         var score = 0
         let pairs: [(String, [String])] = [
             ("comedy", ["comedy", "stand", "skit", "funny"]),
-            ("thriller", ["thriller", "crime", "mystery"]),
-            ("horror", ["horror"]),
+            ("thriller", ["thriller", "crime", "mystery", "suspense"]),
+            ("horror", ["horror", "scary", "haunt", "terror", "creep"]),
+            ("scary", ["horror", "thriller", "suspense"]),
+            ("creepy", ["horror", "thriller"]),
+            ("spooky", ["horror", "thriller"]),
             ("documentary", ["documentary", "doc"]),
             ("family", ["family", "animation", "kids"]),
             ("romance", ["romance", "love"]),

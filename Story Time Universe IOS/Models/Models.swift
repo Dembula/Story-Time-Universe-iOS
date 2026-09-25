@@ -736,6 +736,34 @@ struct AISearchResult: Hashable {
     let reasoning: String?
     let suggestions: [String]
     let usedFallback: Bool
+    /// Horizontal rows for the Netflix-style AI UI (Top Results, genre lanes, etc.).
+    let sections: [AISearchSection]
+    /// True when the user asked for something we can't honestly fulfill from the catalogue.
+    let unmetIntent: Bool
+
+    init(
+        results: [SearchResult],
+        reasoning: String?,
+        suggestions: [String],
+        usedFallback: Bool,
+        sections: [AISearchSection] = [],
+        unmetIntent: Bool = false
+    ) {
+        self.results = results
+        self.reasoning = reasoning
+        self.suggestions = suggestions
+        self.usedFallback = usedFallback
+        self.sections = sections.isEmpty && !results.isEmpty
+            ? [AISearchSection(title: "Top Results", results: Array(results.prefix(12)))]
+            : sections
+        self.unmetIntent = unmetIntent
+    }
+}
+
+struct AISearchSection: Hashable, Identifiable {
+    var id: String { title }
+    let title: String
+    let results: [SearchResult]
 }
 
 struct ViewerSubscription: Codable, Hashable {
