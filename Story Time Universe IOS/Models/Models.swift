@@ -71,11 +71,9 @@ nonisolated struct ContentItem: Decodable, Identifiable, Hashable {
         return t == "SERIES" || t == "SHOW" || t == "WEB_SERIES" || t.contains("SERIES")
     }
 
-    /// True when the title is freshly uploaded / marked new for browse badges.
+    /// True when the title was uploaded/published within the last 7 days (home/browse posters).
     var showsNewBadge: Bool {
-        if isNew == true { return true }
-        if Self.tagsIndicateNew(tags) { return true }
-        return Self.isRecentlyPublished(createdAt: createdAt, publishedAt: publishedAt)
+        Self.isWithinNewWindow(createdAt: createdAt, publishedAt: publishedAt)
     }
 
     var posterCandidates: [URL] {
@@ -212,16 +210,13 @@ nonisolated struct ContentItem: Decodable, Identifiable, Hashable {
         return nil
     }
 
-    private static func tagsIndicateNew(_ tags: String?) -> Bool {
-        guard let tags else { return false }
-        let lower = tags.lowercased()
-        return lower.contains("new") || lower.contains("#new") || lower.contains("just added")
-    }
+    private static let newBadgeWindowSeconds: TimeInterval = 7 * 24 * 60 * 60
 
-    private static func isRecentlyPublished(createdAt: String?, publishedAt: String?) -> Bool {
+    private static func isWithinNewWindow(createdAt: String?, publishedAt: String?) -> Bool {
+        // Prefer upload time; fall back to publish date.
         let date = parseFlexibleDate(createdAt) ?? parseFlexibleDate(publishedAt)
         guard let date else { return false }
-        return date.timeIntervalSinceNow > -30 * 24 * 60 * 60
+        return date.timeIntervalSinceNow > -newBadgeWindowSeconds
     }
 
     private static func parseFlexibleDate(_ raw: String?) -> Date? {
