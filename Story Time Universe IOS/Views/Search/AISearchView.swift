@@ -224,7 +224,7 @@ struct AISearchView: View {
             if canShowMore(turn) {
                 Button {
                     withAnimation(.easeOut(duration: 0.28)) {
-                        expandedTurns.insert(turn.id)
+                        _ = expandedTurns.insert(turn.id)
                     }
                 } label: {
                     Text("Show More")
