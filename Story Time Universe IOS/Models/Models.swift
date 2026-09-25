@@ -42,7 +42,7 @@ nonisolated struct ActiveProfileResponse: Codable {
     let paymentRequired: Bool?
 }
 
-nonisolated struct ContentItem: Codable, Identifiable, Hashable {
+nonisolated struct ContentItem: Decodable, Identifiable, Hashable {
     let id: String
     let title: String
     let description: String?
@@ -290,7 +290,7 @@ nonisolated struct RatingStats: Codable, Hashable {
     let count: Int?
 }
 
-nonisolated struct Episode: Codable, Identifiable, Hashable {
+nonisolated struct Episode: Decodable, Identifiable, Hashable {
     let id: String
     let title: String?
     let description: String?
@@ -333,7 +333,7 @@ nonisolated struct Episode: Codable, Identifiable, Hashable {
     }
 }
 
-nonisolated struct Season: Codable, Hashable {
+nonisolated struct Season: Decodable, Hashable {
     let id: String?
     let seasonNumber: Int?
     let title: String?
@@ -449,7 +449,7 @@ nonisolated struct CrewCredit: Codable, Identifiable, Hashable {
     }
 }
 
-nonisolated struct ContentDetail: Codable, Identifiable, Hashable {
+nonisolated struct ContentDetail: Decodable, Identifiable, Hashable {
     let id: String
     let title: String
     let description: String?
@@ -613,7 +613,7 @@ nonisolated struct PlaybackSource: Codable, Hashable {
     let type: String?
 }
 
-nonisolated struct SubtitleTrack: Codable, Identifiable, Hashable {
+nonisolated struct SubtitleTrack: Decodable, Identifiable, Hashable {
     let id: String
     let language: String?
     let label: String?
@@ -646,7 +646,7 @@ nonisolated struct SubtitleTrack: Codable, Identifiable, Hashable {
     }
 }
 
-nonisolated struct PlaybackBundle: Codable, Hashable {
+nonisolated struct PlaybackBundle: Decodable, Hashable {
     let id: String?
     let title: String?
     let playback: PlaybackSource?
@@ -661,7 +661,7 @@ nonisolated struct PlaybackBundle: Codable, Hashable {
     }
 }
 
-nonisolated struct WatchlistItem: Codable, Hashable {
+nonisolated struct WatchlistItem: Decodable, Hashable {
     let id: String?
     let contentId: String?
     let content: ContentItem?

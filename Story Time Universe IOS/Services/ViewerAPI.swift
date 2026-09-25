@@ -1161,7 +1161,7 @@ actor ViewerAPI {
         let (data, response) = try await api.request(path: "api/watchlist")
         guard response.statusCode == 200 else { throw api.parseAPIError(data: data, status: response.statusCode) }
         // Response is array of { content: ContentItem }
-        struct Row: Codable { let content: ContentItem? }
+        struct Row: Decodable { let content: ContentItem? }
         let rows = (try? api.decode([Row].self, from: data)) ?? []
         return rows.compactMap(\.content)
     }
