@@ -55,7 +55,7 @@ final class DownloadManager: NSObject, ObservableObject {
         reconnectInFlightTasks()
     }
 
-    static func makeKey(contentId: String, episodeId: String?) -> String {
+    nonisolated static func makeKey(contentId: String, episodeId: String?) -> String {
         if let episodeId, !episodeId.isEmpty { return "\(contentId)|\(episodeId)" }
         return contentId
     }

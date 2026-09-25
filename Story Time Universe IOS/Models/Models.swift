@@ -68,16 +68,8 @@ nonisolated struct ContentItem: Decodable, Identifiable, Hashable {
     /// True when the title is freshly uploaded / marked new for browse badges.
     var showsNewBadge: Bool {
         if isNew == true { return true }
-        if let tags {
-            let lower = tags.lowercased()
-            if lower.contains("new") || lower.contains("#new") || lower.contains("just added") {
-                return true
-            }
-        }
-        if let date = Self.parseFlexibleDate(createdAt) ?? Self.parseFlexibleDate(publishedAt) {
-            return date.timeIntervalSinceNow > -30 * 24 * 60 * 60
-        }
-        return false
+        if Self.tagsIndicateNew(tags) { return true }
+        return Self.isRecentlyPublished(createdAt: createdAt, publishedAt: publishedAt)
     }
 
     var posterCandidates: [URL] {
@@ -173,13 +165,9 @@ nonisolated struct ContentItem: Decodable, Identifiable, Hashable {
         featured = try c.decodeIfPresent(Bool.self, forKey: .featured)
         tags = Self.decodeFlexibleString(c, forKey: .tags)
         minAge = Self.decodeFlexibleInt(c, forKey: .minAge)
-        createdAt = (try? c.decodeIfPresent(String.self, forKey: .createdAt))
-            ?? (try? c.decodeIfPresent(String.self, forKey: .created_at))
-        publishedAt = (try? c.decodeIfPresent(String.self, forKey: .publishedAt))
-            ?? (try? c.decodeIfPresent(String.self, forKey: .published_at))
-        isNew = (try? c.decodeIfPresent(Bool.self, forKey: .isNew))
-            ?? (try? c.decodeIfPresent(Bool.self, forKey: .is_new))
-            ?? (try? c.decodeIfPresent(Bool.self, forKey: .newlyAdded))
+        createdAt = Self.decodeString(c, primary: .createdAt, fallback: .created_at)
+        publishedAt = Self.decodeString(c, primary: .publishedAt, fallback: .published_at)
+        isNew = Self.decodeBool(c, keys: [.isNew, .is_new, .newlyAdded])
     }
 
     private static func decodeFlexibleInt(_ c: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Int? {
@@ -195,6 +183,39 @@ nonisolated struct ContentItem: Decodable, Identifiable, Hashable {
             return arr.joined(separator: ", ")
         }
         return nil
+    }
+
+    private static func decodeString(
+        _ c: KeyedDecodingContainer<CodingKeys>,
+        primary: CodingKeys,
+        fallback: CodingKeys
+    ) -> String? {
+        if let value = try? c.decodeIfPresent(String.self, forKey: primary) { return value }
+        return try? c.decodeIfPresent(String.self, forKey: fallback)
+    }
+
+    private static func decodeBool(
+        _ c: KeyedDecodingContainer<CodingKeys>,
+        keys: [CodingKeys]
+    ) -> Bool? {
+        for key in keys {
+            if let value = try? c.decodeIfPresent(Bool.self, forKey: key) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func tagsIndicateNew(_ tags: String?) -> Bool {
+        guard let tags else { return false }
+        let lower = tags.lowercased()
+        return lower.contains("new") || lower.contains("#new") || lower.contains("just added")
+    }
+
+    private static func isRecentlyPublished(createdAt: String?, publishedAt: String?) -> Bool {
+        let date = parseFlexibleDate(createdAt) ?? parseFlexibleDate(publishedAt)
+        guard let date else { return false }
+        return date.timeIntervalSinceNow > -30 * 24 * 60 * 60
     }
 
     private static func parseFlexibleDate(_ raw: String?) -> Date? {
@@ -397,23 +418,44 @@ nonisolated private enum LossyJSONValue: Decodable {
     case object
 
     init(from decoder: Decoder) throws {
-        if let container = try? decoder.singleValueContainer() {
-            if container.decodeNil() { self = .null; return }
-            if (try? container.decode(Bool.self)) != nil { self = .bool; return }
-            if (try? container.decode(Double.self)) != nil { self = .number; return }
-            if (try? container.decode(String.self)) != nil { self = .string; return }
+        if let scalar = Self.decodeScalar(from: decoder) {
+            self = scalar
+            return
         }
-        if var unkeyed = try? decoder.unkeyedContainer() {
-            while !unkeyed.isAtEnd { _ = try? unkeyed.decode(LossyJSONValue.self) }
+        if Self.skipUnkeyed(from: decoder) {
             self = .array
             return
         }
-        if let keyed = try? decoder.container(keyedBy: DynamicKey.self) {
-            for key in keyed.allKeys { _ = try? keyed.decode(LossyJSONValue.self, forKey: key) }
+        if Self.skipKeyed(from: decoder) {
             self = .object
             return
         }
         self = .null
+    }
+
+    private static func decodeScalar(from decoder: Decoder) -> LossyJSONValue? {
+        guard let container = try? decoder.singleValueContainer() else { return nil }
+        if container.decodeNil() { return .null }
+        if (try? container.decode(Bool.self)) != nil { return .bool }
+        if (try? container.decode(Double.self)) != nil { return .number }
+        if (try? container.decode(String.self)) != nil { return .string }
+        return nil
+    }
+
+    private static func skipUnkeyed(from decoder: Decoder) -> Bool {
+        guard var unkeyed = try? decoder.unkeyedContainer() else { return false }
+        while !unkeyed.isAtEnd {
+            _ = try? unkeyed.decode(LossyJSONValue.self)
+        }
+        return true
+    }
+
+    private static func skipKeyed(from decoder: Decoder) -> Bool {
+        guard let keyed = try? decoder.container(keyedBy: DynamicKey.self) else { return false }
+        for key in keyed.allKeys {
+            _ = try? keyed.decode(LossyJSONValue.self, forKey: key)
+        }
+        return true
     }
 
     private struct DynamicKey: CodingKey {
@@ -706,7 +748,7 @@ nonisolated struct SearchResult: Codable, Identifiable, Hashable {
     }
 }
 
-extension ContentItem {
+nonisolated extension ContentItem {
     var asSearchResult: SearchResult {
         SearchResult(
             id: id,
