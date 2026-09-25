@@ -1129,6 +1129,8 @@ final class PlayerViewModel: ObservableObject {
             self?.objectWillChange.send()
         }
     }
+
+    func start(contentId: String, episodeId: String?, trailer: Bool = false, forceRestart: Bool = false) async {
         // Always tear down previous session first — critical for stability.
         tearDownPlayer(flushProgress: true)
 

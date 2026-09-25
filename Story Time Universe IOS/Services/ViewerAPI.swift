@@ -216,9 +216,9 @@ actor ViewerAPI {
         return try api.decode(PlaybackBundle.self, from: data)
     }
 
-/// Pay Per View unlock. Production creates a PENDING access row; when the title is not
-/// already owned, iOS routes the user to StoreKit instead of any web `checkoutUrl`.
-func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
+    /// Pay Per View unlock. Production creates a PENDING access row; when the title is not
+    /// already owned, iOS routes the user to StoreKit instead of any web `checkoutUrl`.
+    func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
         let (data, response) = try await api.request(
             path: "api/viewer/ppv",
             method: "POST",
@@ -675,14 +675,24 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
 
     nonisolated private static func matchesGenre(_ result: SearchResult, genre: String) -> Bool {
         let target = genre.lowercased()
-        if let canon = CatalogueTypes.canonicalGenre(from: result.category),
-           canon.lowercased() == target {
-            return true
-        }
-        let hay = [result.category, result.type, result.title]
+        let parts = [result.category, result.type]
             .compactMap { $0?.lowercased() }
-            .joined(separator: " ")
-        return hay.contains(target)
+            .map {
+                $0.replacingOccurrences(of: "_", with: " ")
+                    .replacingOccurrences(of: "-", with: " ")
+                    .replacingOccurrences(of: "#", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        for hay in parts where !hay.isEmpty {
+            if hay == target
+                || hay.hasPrefix(target + " ")
+                || hay.hasSuffix(" " + target)
+                || hay.contains(" " + target + " ")
+                || hay.contains(target) {
+                return true
+            }
+        }
+        return result.title.lowercased().contains(target)
     }
 
     /// Narrative “what I think” report so the UI feels like AI, not keyword search.
@@ -900,9 +910,21 @@ func requestPpvAccess(contentId: String) async throws -> PpvCheckoutResponse {
 
         var byLane: [String: [SearchResult]] = [:]
         for item in results {
-            let lane = CatalogueTypes.canonicalGenre(from: item.category)
-                ?? item.type.map { CatalogueTypes.pluralLabels[$0.uppercased()] ?? $0.replacingOccurrences(of: "_", with: " ").capitalized }
-                ?? "More picks"
+            let lane: String
+            if let raw = item.category?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+                var value = raw
+                while value.hasPrefix("#") { value.removeFirst() }
+                let cleaned = value
+                    .replacingOccurrences(of: "_", with: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                lane = cleaned.isEmpty
+                    ? (item.type?.replacingOccurrences(of: "_", with: " ").capitalized ?? "More picks")
+                    : cleaned.capitalized
+            } else if let type = item.type {
+                lane = type.replacingOccurrences(of: "_", with: " ").capitalized
+            } else {
+                lane = "More picks"
+            }
             byLane[lane, default: []].append(item)
         }
 
