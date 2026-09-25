@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
    LastUpgradeVersion = "1600"
-   version = "1.7">
+   version = "1.8">
    <BuildAction
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES">
@@ -28,7 +28,6 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "YES">
-      <!-- Relative to this .xcscheme file: xcschemes/../Products.storekit (no spaces) -->
       <StoreKitConfigurationFileReference
          identifier = "../Products.storekit">
       </StoreKitConfigurationFileReference>
@@ -53,11 +52,6 @@
             ReferencedContainer = "container:Story Time Universe IOS.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
-      <!--
-        MUST live next to this scheme path with ZERO spaces in the relative path.
-        Wrong or spaced paths make StoreKit silently use App Store → 0 products.
-        File: Story Time Universe IOS.xcodeproj/xcshareddata/Products.storekit
-      -->
       <StoreKitConfigurationFileReference
          identifier = "../Products.storekit">
       </StoreKitConfigurationFileReference>
