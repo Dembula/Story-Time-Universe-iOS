@@ -121,6 +121,7 @@ struct ContentDetailView: View {
                     seasons: detail?.seasons ?? [],
                     seriesTitle: displayTitle,
                     seriesContentId: contentId,
+                    seriesFallbackImageURLs: detail?.posterCandidates ?? detail?.backdropCandidates ?? seed?.posterCandidates ?? [],
                     contentType: detail?.type ?? seed?.type,
                     category: detail?.category ?? seed?.category,
                     year: detail?.year ?? seed?.year,
@@ -579,6 +580,7 @@ private struct DetailBodySections: View {
     let seasons: [Season]
     let seriesTitle: String
     let seriesContentId: String
+    let seriesFallbackImageURLs: [URL]
     let contentType: String?
     let category: String?
     let year: Int?
@@ -606,6 +608,7 @@ private struct DetailBodySections: View {
                     seasons: seasons,
                     seriesTitle: seriesTitle,
                     seriesContentId: seriesContentId,
+                    seriesFallbackImageURLs: seriesFallbackImageURLs,
                     contentType: contentType,
                     onPlayEpisode: onPlayEpisode
                 )
@@ -906,6 +909,7 @@ private struct DetailEpisodesSection: View {
     let seasons: [Season]
     let seriesTitle: String
     let seriesContentId: String
+    let seriesFallbackImageURLs: [URL]
     let contentType: String?
     let onPlayEpisode: (String) -> Void
 
@@ -954,20 +958,23 @@ private struct DetailEpisodesSection: View {
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 14) {
-                            ForEach(episodes) { episode in
+                            ForEach(Array(episodes.enumerated()), id: \.element.id) { idx, episode in
+                                let epNum = episode.episodeNumber ?? (idx + 1)
                                 EpisodePosterCard(
                                     episode: episode,
+                                    episodeNumber: epNum,
                                     seasonNumber: season.seasonNumber ?? 1,
+                                    fallbackImageURLs: seriesFallbackImageURLs,
                                     downloadSpec: DownloadSpec(
                                         contentId: seriesContentId,
                                         episodeId: episode.id,
                                         title: seriesTitle,
-                                        subtitle: "S\(season.seasonNumber ?? 1) E\(episode.episodeNumber ?? 0) · \(episode.title ?? "Episode")",
-                                        posterUrl: episode.thumbnailUrl,
+                                        subtitle: "S\(season.seasonNumber ?? 1) E\(epNum) · \(episode.title ?? "Episode \(epNum)")",
+                                        posterUrl: episode.thumbnailUrl ?? seriesFallbackImageURLs.first.map(\.absoluteString),
                                         type: contentType,
                                         durationSeconds: episode.duration,
                                         seasonNumber: season.seasonNumber,
-                                        episodeNumber: episode.episodeNumber
+                                        episodeNumber: epNum
                                     ),
                                     onPlay: { onPlayEpisode(episode.id) }
                                 )
@@ -982,12 +989,20 @@ private struct DetailEpisodesSection: View {
 
 private struct EpisodePosterCard: View {
     let episode: Episode
+    let episodeNumber: Int
     let seasonNumber: Int
+    let fallbackImageURLs: [URL]
     let downloadSpec: DownloadSpec
     let onPlay: () -> Void
 
     private var thumbURLs: [URL] {
-        MediaURL.candidates(posterUrl: episode.thumbnailUrl, backdropUrl: nil, videoUrl: episode.videoUrl, preferBackdrop: true)
+        let episodeThumbs = MediaURL.candidates(
+            posterUrl: episode.thumbnailUrl,
+            backdropUrl: nil,
+            videoUrl: episode.videoUrl,
+            preferBackdrop: true
+        )
+        return episodeThumbs.isEmpty ? fallbackImageURLs : episodeThumbs
     }
 
     var body: some View {
@@ -996,16 +1011,25 @@ private struct EpisodePosterCard: View {
                 ZStack(alignment: .bottomLeading) {
                     RemoteImage(urls: thumbURLs)
                         .frame(width: 220, height: 124)
+                        .background(Color.white.opacity(0.06))
+
                     LinearGradient(
-                        colors: [.clear, .black.opacity(0.75)],
+                        colors: [.clear, .black.opacity(0.78)],
                         startPoint: .center,
                         endPoint: .bottom
                     )
+
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 34))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .shadow(color: .black.opacity(0.45), radius: 6, y: 1)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("EPISODE \(episode.episodeNumber ?? 0)")
+                        Text("EPISODE \(episodeNumber)")
                             .font(.caption2.weight(.bold))
-                            .foregroundStyle(.white.opacity(0.75))
-                        Text(episode.title ?? "Episode")
+                            .foregroundStyle(.white.opacity(0.8))
+                        Text(episode.title ?? "Episode \(episodeNumber)")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.white)
                             .lineLimit(1)
@@ -1014,6 +1038,10 @@ private struct EpisodePosterCard: View {
                 }
                 .frame(width: 220, height: 124)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Theme.accent.opacity(0.22), lineWidth: 1)
+                )
             }
             .buttonStyle(.plain)
 
@@ -1030,6 +1058,10 @@ private struct EpisodePosterCard: View {
                     Label("\(duration)m", systemImage: "play.fill")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.white.opacity(0.85))
+                } else {
+                    Text("Episode \(episodeNumber)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Theme.muted)
                 }
                 Spacer()
                 DownloadButton(spec: downloadSpec, style: .icon)

@@ -146,14 +146,14 @@ struct HomeView: View {
 
                                 ContentRowView(
                                     title: "Trending Now",
-                                    items: trending,
+                                    items: Array(trending.prefix(10)),
                                     onSelect: { selectedContent = $0 },
                                     onSeeAll: {
                                         catalogueRequest = CatalogueListRequest(
                                             id: "trending-\(browseFilter.chromeTitle)",
                                             title: "Trending Now",
                                             typeValues: activeTypeValues,
-                                            seedItems: trending
+                                            seedItems: Array(trending.prefix(10))
                                         )
                                     }
                                 )
@@ -464,7 +464,7 @@ struct HomeView: View {
 
         if hasFreshData || (featured.isEmpty && trending.isEmpty && catalogRows.isEmpty) {
             featured = f.isEmpty ? Array(t.prefix(5)) : f
-            trending = t
+            trending = Array(t.prefix(10))
             continueWatching = cw
             catalogRows = rows
         } else if !cw.isEmpty {

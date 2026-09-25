@@ -65,6 +65,12 @@ nonisolated struct ContentItem: Decodable, Identifiable, Hashable {
         (type ?? "TITLE").replacingOccurrences(of: "_", with: " ").capitalized
     }
 
+    /// Series / show-like titles (home Series row, search cues).
+    var isSeriesLike: Bool {
+        let t = (type ?? "").uppercased()
+        return t == "SERIES" || t == "SHOW" || t == "WEB_SERIES" || t.contains("SERIES")
+    }
+
     /// True when the title is freshly uploaded / marked new for browse badges.
     var showsNewBadge: Bool {
         if isNew == true { return true }

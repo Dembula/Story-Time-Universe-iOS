@@ -79,10 +79,12 @@ struct PlayerContainerView: View {
                     lockedChrome
                         .opacity(controlsVisible ? 1 : 0)
                         .allowsHitTesting(controlsVisible)
+                        .animation(.easeInOut(duration: 0.38), value: controlsVisible)
                 } else if !showEndCreditsPrompt {
                     mainChrome(player: player)
                         .opacity(controlsVisible ? 1 : 0)
                         .allowsHitTesting(controlsVisible)
+                        .animation(.easeInOut(duration: 0.38), value: controlsVisible)
                 }
 
                 if showNearEndNext, nextEpisode != nil, !showEndCreditsPrompt, !isLocked {
@@ -808,16 +810,20 @@ struct PlayerContainerView: View {
             return
         }
         if controlsVisible {
-            controlsVisible = false
             hideTask?.cancel()
+            withAnimation(.easeInOut(duration: 0.38)) {
+                controlsVisible = false
+            }
         } else {
             showControls(persistent: !model.isPlaying)
         }
     }
 
     private func showControls(persistent: Bool) {
-        controlsVisible = true
         hideTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.32)) {
+            controlsVisible = true
+        }
         if !persistent { scheduleHideControls() }
     }
 
@@ -828,7 +834,10 @@ struct PlayerContainerView: View {
             try? await Task.sleep(nanoseconds: 3_200_000_000)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                if isLocked || model.isPlaying { controlsVisible = false }
+                guard isLocked || model.isPlaying else { return }
+                withAnimation(.easeInOut(duration: 0.45)) {
+                    controlsVisible = false
+                }
             }
         }
     }

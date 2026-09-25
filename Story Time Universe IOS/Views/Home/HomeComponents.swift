@@ -206,7 +206,8 @@ struct ContentRowView: View {
     @State private var glowFadeTask: Task<Void, Never>?
 
     var body: some View {
-        if !items.isEmpty {
+        let displayItems = showsRankNumbers ? Array(items.prefix(10)) : items
+        if !displayItems.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 Button {
                     onSeeAll?()
@@ -227,13 +228,14 @@ struct ContentRowView: View {
                 .disabled(onSeeAll == nil)
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: showsRankNumbers ? 6 : 12) {
-                        ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
+                    HStack(spacing: showsRankNumbers ? 8 : 12) {
+                        ForEach(Array(displayItems.enumerated()), id: \.element.id) { idx, item in
                             Button { onSelect(item) } label: {
                                 PosterCard(
                                     item: item,
                                     rank: showsRankNumbers ? idx + 1 : nil,
-                                    glowActive: rowGlow
+                                    glowActive: rowGlow,
+                                    showSeriesEpisodeCue: title.lowercased().contains("series")
                                 )
                             }
                             .buttonStyle(.plain)
@@ -242,25 +244,7 @@ struct ContentRowView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
                 }
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 4)
-                        .onChanged { _ in
-                            glowFadeTask?.cancel()
-                            if !rowGlow {
-                                withAnimation(.easeOut(duration: 0.18)) { rowGlow = true }
-                            }
-                        }
-                        .onEnded { _ in
-                            glowFadeTask?.cancel()
-                            glowFadeTask = Task {
-                                try? await Task.sleep(nanoseconds: 280_000_000)
-                                guard !Task.isCancelled else { return }
-                                await MainActor.run {
-                                    withAnimation(.easeOut(duration: 0.55)) { rowGlow = false }
-                                }
-                            }
-                        }
-                )
+                .simultaneousGesture(rowScrollGlowGesture)
             }
         } else if showEmptyPlaceholder {
             VStack(alignment: .leading, spacing: 12) {
@@ -300,6 +284,30 @@ struct ContentRowView: View {
             || t.contains("popular")
             || t.contains("chart")
             || t.contains("most watched")
+    }
+
+    /// Only light the row when the drag is clearly horizontal so vertical page scroll stays free.
+    private var rowScrollGlowGesture: some Gesture {
+        DragGesture(minimumDistance: 22)
+            .onChanged { value in
+                let horizontal = abs(value.translation.width)
+                let vertical = abs(value.translation.height)
+                guard horizontal > vertical * 1.35 else { return }
+                glowFadeTask?.cancel()
+                if !rowGlow {
+                    withAnimation(.easeOut(duration: 0.2)) { rowGlow = true }
+                }
+            }
+            .onEnded { _ in
+                glowFadeTask?.cancel()
+                glowFadeTask = Task {
+                    try? await Task.sleep(nanoseconds: 320_000_000)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        withAnimation(.easeOut(duration: 0.5)) { rowGlow = false }
+                    }
+                }
+            }
     }
 }
 
@@ -348,13 +356,13 @@ struct ContinueWatchingRow: View {
                                 .frame(width: 168, height: 96)
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .shadow(
-                                    color: Theme.accent.opacity(rowGlow ? 0.5 : 0),
-                                    radius: rowGlow ? 14 : 0,
+                                    color: Theme.accent.opacity(rowGlow ? 0.26 : 0),
+                                    radius: rowGlow ? 10 : 0,
                                     y: 2
                                 )
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .stroke(Theme.accent.opacity(rowGlow ? 0.3 : 0), lineWidth: 1.2)
+                                        .stroke(Theme.accent.opacity(rowGlow ? 0.16 : 0), lineWidth: 1)
                                 )
 
                                 Text(item.title)
@@ -371,20 +379,23 @@ struct ContinueWatchingRow: View {
                 .padding(.vertical, 8)
             }
             .simultaneousGesture(
-                DragGesture(minimumDistance: 4)
-                    .onChanged { _ in
+                DragGesture(minimumDistance: 22)
+                    .onChanged { value in
+                        let horizontal = abs(value.translation.width)
+                        let vertical = abs(value.translation.height)
+                        guard horizontal > vertical * 1.35 else { return }
                         glowFadeTask?.cancel()
                         if !rowGlow {
-                            withAnimation(.easeOut(duration: 0.18)) { rowGlow = true }
+                            withAnimation(.easeOut(duration: 0.2)) { rowGlow = true }
                         }
                     }
                     .onEnded { _ in
                         glowFadeTask?.cancel()
                         glowFadeTask = Task {
-                            try? await Task.sleep(nanoseconds: 280_000_000)
+                            try? await Task.sleep(nanoseconds: 320_000_000)
                             guard !Task.isCancelled else { return }
                             await MainActor.run {
-                                withAnimation(.easeOut(duration: 0.55)) { rowGlow = false }
+                                withAnimation(.easeOut(duration: 0.5)) { rowGlow = false }
                             }
                         }
                     }
@@ -397,27 +408,29 @@ struct PosterCard: View {
     let item: ContentItem
     var rank: Int? = nil
     var glowActive: Bool = false
+    /// Soft “Episode 1” cue on Series catalogue rows (even for single-episode titles).
+    var showSeriesEpisodeCue: Bool = false
 
     var body: some View {
         Group {
             if let rank {
-                HStack(alignment: .bottom, spacing: -22) {
+                HStack(alignment: .bottom, spacing: rank >= 10 ? -18 : -22) {
                     RankBadge(rank: rank)
                         .zIndex(0)
                     posterArtwork
                         .zIndex(1)
                 }
-                .frame(width: rank >= 10 ? 158 : 148, alignment: .trailing)
+                .frame(width: rank >= 10 ? 176 : 148, alignment: .trailing)
             } else {
                 posterArtwork
             }
         }
         .shadow(
-            color: Theme.accent.opacity(glowActive ? 0.55 : 0),
-            radius: glowActive ? 16 : 0,
+            color: Theme.accent.opacity(glowActive ? 0.28 : 0),
+            radius: glowActive ? 10 : 0,
             y: glowActive ? 2 : 0
         )
-        .scaleEffect(glowActive ? 1.02 : 1.0)
+        .scaleEffect(glowActive ? 1.015 : 1.0)
         .animation(.easeOut(duration: 0.22), value: glowActive)
     }
 
@@ -435,6 +448,13 @@ struct PosterCard: View {
                     .foregroundStyle(.white)
                     .lineLimit(2)
                     .shadow(color: .black.opacity(0.7), radius: 2, y: 1)
+
+                if showSeriesEpisodeCue || item.isSeriesLike {
+                    Text("Episode 1")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.accentGold.opacity(0.95))
+                        .shadow(color: .black.opacity(0.6), radius: 1, y: 1)
+                }
             }
             .padding(8)
 
@@ -455,7 +475,7 @@ struct PosterCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Theme.accent.opacity(glowActive ? 0.35 : 0), lineWidth: 1.5)
+                .stroke(Theme.accent.opacity(glowActive ? 0.2 : 0), lineWidth: 1.2)
         )
     }
 }
@@ -468,8 +488,8 @@ private struct RankBadge: View {
         ZStack {
             Text(rankLabel)
                 .font(.system(size: fontSize, weight: .black, design: .rounded))
-                .foregroundStyle(Color.black.opacity(0.55))
-                .offset(x: 1.5, y: 2)
+                .foregroundStyle(Color.black.opacity(0.5))
+                .offset(x: 2, y: 2)
 
             Text(rankLabel)
                 .font(.system(size: fontSize, weight: .black, design: .rounded))
@@ -477,27 +497,27 @@ private struct RankBadge: View {
                     LinearGradient(
                         colors: [
                             Color.white,
-                            Color.white.opacity(0.82),
-                            Theme.accent.opacity(0.95),
+                            Color.white.opacity(0.88),
+                            Theme.accent.opacity(0.92),
                         ],
                         startPoint: .top,
                         endPoint: .bottom
                     )
                 )
-                .overlay {
-                    Text(rankLabel)
-                        .font(.system(size: fontSize, weight: .black, design: .rounded))
-                        .foregroundStyle(.clear)
-                        .shadow(color: Theme.accent.opacity(0.35), radius: 8, y: 0)
-                }
+                .shadow(color: Theme.accent.opacity(0.28), radius: 6, y: 0)
         }
-        .frame(width: rank >= 10 ? 78 : 64, height: 120, alignment: .bottomTrailing)
-        .accessibilityHidden(true)
+        .frame(width: badgeWidth, height: 120, alignment: .bottomTrailing)
+        .accessibilityLabel("Number \(rank)")
     }
 
     private var rankLabel: String { "\(rank)" }
 
     private var fontSize: CGFloat {
-        rank >= 10 ? 74 : 92
+        // Keep both digits of 10 readable (full-size “10” was clipping into dots).
+        rank >= 10 ? 62 : 92
+    }
+
+    private var badgeWidth: CGFloat {
+        rank >= 10 ? 96 : 64
     }
 }

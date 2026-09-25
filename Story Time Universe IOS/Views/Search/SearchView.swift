@@ -13,6 +13,8 @@ struct SearchView: View {
     @State private var errorMessage: String?
     @State private var showAISearch = false
 
+    @FocusState private var searchFocused: Bool
+
     private var profileAge: Int? { appState.activeProfile?.age }
 
     var body: some View {
@@ -87,12 +89,14 @@ struct SearchView: View {
     }
 
     private var searchBar: some View {
-        HStack {
+        HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(Theme.muted)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(searchFocused || !query.isEmpty ? Theme.accent : Theme.muted)
             TextField("Search titles, genres…", text: $query)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .focused($searchFocused)
                 .onSubmit { Task { await runSearch() } }
             if !query.isEmpty {
                 Button {
@@ -102,13 +106,32 @@ struct SearchView: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(Theme.muted)
                 }
+                .buttonStyle(.plain)
             }
         }
-        .padding(14)
-        .background(Theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
         .padding(.horizontal, 16)
-        .padding(.bottom, 8)
+        .padding(.vertical, 13)
+        .background(Color.white.opacity(0.06))
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            Theme.accent.opacity(searchFocused || !query.isEmpty ? 0.9 : 0.4),
+                            Theme.accentGold.opacity(searchFocused || !query.isEmpty ? 0.75 : 0.28),
+                            Theme.accent.opacity(searchFocused || !query.isEmpty ? 0.65 : 0.22),
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    lineWidth: 1.35
+                )
+                .shadow(color: Theme.accent.opacity(searchFocused ? 0.35 : 0.14), radius: searchFocused ? 8 : 4)
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
+        .padding(.top, 4)
     }
 
     @ViewBuilder
@@ -152,9 +175,31 @@ struct SearchView: View {
 
     private func recommendedRow(_ item: ContentItem) -> some View {
         HStack(spacing: 14) {
-            RemoteImage(urls: item.posterCandidates, preferPortrait: true)
-                .frame(width: 64, height: 96)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Theme.accent.opacity(0.28),
+                                Theme.accent.opacity(0.08),
+                                Color.clear,
+                            ],
+                            startPoint: .bottomLeading,
+                            endPoint: .topTrailing
+                        )
+                    )
+                    .frame(width: 72, height: 104)
+                    .blur(radius: 1)
+
+                RemoteImage(urls: item.posterCandidates, preferPortrait: true)
+                    .frame(width: 64, height: 96)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Theme.accent.opacity(0.22), lineWidth: 1)
+                    )
+            }
+            .frame(width: 72, height: 104)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
@@ -166,6 +211,11 @@ struct SearchView: View {
                     .font(.subheadline)
                     .foregroundStyle(Theme.muted)
                     .lineLimit(1)
+                if item.isSeriesLike {
+                    Text("Episode 1")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                }
             }
 
             Spacer(minLength: 0)
@@ -195,7 +245,25 @@ struct SearchView: View {
                         Button {
                             selected = result.asContentItem
                         } label: {
-                            PosterCard(item: result.asContentItem)
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(
+                                        RadialGradient(
+                                            colors: [
+                                                Theme.accent.opacity(0.32),
+                                                Theme.accent.opacity(0.1),
+                                                Color.clear,
+                                            ],
+                                            center: .center,
+                                            startRadius: 8,
+                                            endRadius: 90
+                                        )
+                                    )
+                                    .frame(width: 130, height: 190)
+                                    .blur(radius: 2)
+
+                                PosterCard(item: result.asContentItem)
+                            }
                         }
                         .buttonStyle(.plain)
                     }
