@@ -379,7 +379,7 @@ struct SubscriptionPaywallView: View {
 
     private func freeTrialLabel(for product: Product) -> String? {
         guard let offer = product.subscription?.introductoryOffer,
-              offer.paymentMode == .free
+              offer.paymentMode == .freeTrial
         else {
             // StoreKit config / ASC may lag; still advertise Base trial in UI copy.
             if StoreProducts.includesFreeTrial(productId: product.id) {
