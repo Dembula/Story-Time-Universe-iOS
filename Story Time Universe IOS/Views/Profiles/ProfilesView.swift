@@ -12,6 +12,10 @@ struct ProfilesView: View {
     @State private var selectingId: String?
     @State private var showCreate = false
 
+    private var canAddProfile: Bool {
+        profiles.count < appState.allowedProfileCount
+    }
+
     var body: some View {
         GeometryReader { geo in
             let bottomHeight = min(max(geo.size.height * 0.42, 280), 360)
@@ -68,6 +72,7 @@ struct ProfilesView: View {
                 showCreate = false
                 await load()
             }
+            .environmentObject(appState)
         }
     }
 
@@ -115,30 +120,40 @@ struct ProfilesView: View {
                             .disabled(selectingId != nil)
                         }
 
-                        Button { showCreate = true } label: {
-                            VStack(spacing: 10) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                        .fill(Color.white.opacity(0.12))
-                                        .frame(width: 92, height: 92)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 16)
-                                                .stroke(Color.white.opacity(0.25), lineWidth: 1)
-                                        )
-                                    Image(systemName: "plus")
-                                        .font(.title)
-                                        .foregroundStyle(.white)
+                        if canAddProfile {
+                            Button { showCreate = true } label: {
+                                VStack(spacing: 10) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .fill(Color.white.opacity(0.12))
+                                            .frame(width: 92, height: 92)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 16)
+                                                    .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                                            )
+                                        Image(systemName: "plus")
+                                            .font(.title)
+                                            .foregroundStyle(.white)
+                                    }
+                                    Text("Add")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(.white.opacity(0.8))
+                                    Text(" ")
+                                        .font(.caption2)
                                 }
-                                Text("Add")
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(.white.opacity(0.8))
-                                Text(" ")
-                                    .font(.caption2)
                             }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 24)
+                }
+
+                if !canAddProfile, !profiles.isEmpty {
+                    Text("Your plan allows \(appState.allowedProfileCount) profile\(appState.allowedProfileCount == 1 ? "" : "s"). Upgrade to add more.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.muted)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
                 }
             }
 
@@ -202,10 +217,17 @@ struct ProfilesView: View {
         VStack(spacing: 14) {
             Text("No profiles yet")
                 .foregroundStyle(.white.opacity(0.75))
-            Button("Create profile") { showCreate = true }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accent)
-                .foregroundStyle(.black)
+            if canAddProfile {
+                Button("Create profile") { showCreate = true }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                    .foregroundStyle(.black)
+            } else {
+                Text("Your plan allows \(appState.allowedProfileCount) profile\(appState.allowedProfileCount == 1 ? "" : "s").")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.muted)
+                    .multilineTextAlignment(.center)
+            }
         }
     }
 
@@ -383,6 +405,7 @@ struct PinEntrySheet: View {
 
 struct CreateProfileSheet: View {
     var onCreated: () async -> Void
+    @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var year = Calendar.current.component(.year, from: Date()) - 21
@@ -392,6 +415,7 @@ struct CreateProfileSheet: View {
     @State private var usePin = false
     @State private var error: String?
     @State private var busy = false
+    @State private var existingCount = 0
 
     var body: some View {
         NavigationStack {
@@ -435,6 +459,9 @@ struct CreateProfileSheet: View {
                     .disabled(busy || name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+            .task {
+                existingCount = (try? await ViewerAPI.shared.fetchProfiles())?.count ?? 0
+            }
         }
     }
 
@@ -442,6 +469,13 @@ struct CreateProfileSheet: View {
         busy = true
         error = nil
         defer { busy = false }
+
+        let limit = appState.allowedProfileCount
+        if existingCount >= limit {
+            error = "Your plan allows \(limit) profile\(limit == 1 ? "" : "s"). Upgrade to add more."
+            return
+        }
+
         do {
             _ = try await ViewerAPI.shared.createProfile(
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),

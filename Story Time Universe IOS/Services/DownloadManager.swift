@@ -23,6 +23,10 @@ final class DownloadManager: NSObject, ObservableObject {
     private var avTaskKeys: [Int: String] = [:]
     private var fileTaskKeys: [Int: String] = [:]
     private var keyToTask: [String: URLSessionTask] = [:]
+    /// Expected duration (seconds) for progress fallback when HLS doesn't report ranges.
+    private var keyExpectedDuration: [String: Double] = [:]
+    private var progressObservations: [String: NSKeyValueObservation] = [:]
+    private var lastProgressPublish: [String: Date] = [:]
 
     private let storeURL: URL
     nonisolated private let fileDownloadsDir: URL
@@ -119,6 +123,9 @@ final class DownloadManager: NSObject, ObservableObject {
         )
         records[key] = record
         saveRecords()
+        if let seconds = spec.durationSeconds, seconds > 0 {
+            keyExpectedDuration[key] = Double(seconds)
+        }
 
         // Warm the poster into the disk cache so it shows while offline.
         if let poster = spec.posterUrl {
@@ -170,19 +177,51 @@ final class DownloadManager: NSObject, ObservableObject {
             task.taskDescription = key
             avTaskKeys[task.taskIdentifier] = key
             keyToTask[key] = task
+            observeProgress(task: task, key: key)
             task.resume()
         } else {
             let task = fileSession.downloadTask(with: url)
             task.taskDescription = key
             fileTaskKeys[task.taskIdentifier] = key
             keyToTask[key] = task
+            observeProgress(task: task, key: key)
             task.resume()
+        }
+    }
+
+    private func observeProgress(task: URLSessionTask, key: String) {
+        progressObservations[key]?.invalidate()
+        progressObservations[key] = task.progress.observe(\.fractionCompleted, options: [.new]) { [weak self] progress, _ in
+            let fraction = progress.fractionCompleted
+            Task { @MainActor in
+                self?.publishProgress(key: key, fraction: fraction)
+            }
+        }
+    }
+
+    private func publishProgress(key: String, fraction: Double) {
+        let clamped = min(max(fraction, 0), 0.99)
+        // Throttle UI churn but still move the bar regularly.
+        if let last = lastProgressPublish[key], Date().timeIntervalSince(last) < 0.25, clamped < 0.99 {
+            return
+        }
+        lastProgressPublish[key] = Date()
+        update(key: key) {
+            // Never regress progress (some delegates report 0 mid-flight).
+            if clamped > $0.progress {
+                $0.progress = clamped
+            }
+            if $0.state == .queued { $0.state = .downloading }
         }
     }
 
     func cancelDownload(key: String) {
         keyToTask[key]?.cancel()
         keyToTask[key] = nil
+        progressObservations[key]?.invalidate()
+        progressObservations[key] = nil
+        keyExpectedDuration[key] = nil
+        lastProgressPublish[key] = nil
         if let record = records[key], record.state != .completed {
             if let url = record.localURL {
                 try? FileManager.default.removeItem(at: url)
@@ -195,6 +234,10 @@ final class DownloadManager: NSObject, ObservableObject {
     func deleteDownload(key: String) {
         keyToTask[key]?.cancel()
         keyToTask[key] = nil
+        progressObservations[key]?.invalidate()
+        progressObservations[key] = nil
+        keyExpectedDuration[key] = nil
+        lastProgressPublish[key] = nil
         if let record = records[key], let url = record.localURL {
             try? FileManager.default.removeItem(at: url)
         }
@@ -218,7 +261,10 @@ final class DownloadManager: NSObject, ObservableObject {
     private func update(key: String, _ mutate: (inout DownloadRecord) -> Void) {
         guard var record = records[key] else { return }
         mutate(&record)
-        records[key] = record
+        // Assign a new dictionary so @Published always notifies observers.
+        var next = records
+        next[key] = record
+        records = next
     }
 
     // MARK: - Persistence
@@ -255,6 +301,7 @@ final class DownloadManager: NSObject, ObservableObject {
                 guard let key = task.taskDescription else { continue }
                 self.avTaskKeys[task.taskIdentifier] = key
                 self.keyToTask[key] = task
+                self.observeProgress(task: task, key: key)
                 self.update(key: key) { $0.state = .downloading }
             }
             self.saveRecords()
@@ -265,6 +312,7 @@ final class DownloadManager: NSObject, ObservableObject {
                 guard let key = task.taskDescription else { continue }
                 self.fileTaskKeys[task.taskIdentifier] = key
                 self.keyToTask[key] = task
+                self.observeProgress(task: task, key: key)
                 self.update(key: key) { $0.state = .downloading }
             }
             self.saveRecords()
@@ -316,14 +364,14 @@ extension DownloadManager: AVAssetDownloadDelegate {
             loaded += value.timeRangeValue.duration.seconds
         }
         let expected = timeRangeExpectedToLoad.duration.seconds
-        let progress = expected > 0 ? min(loaded / expected, 1) : 0
+        var progress = expected > 0 ? min(loaded / expected, 0.99) : 0
         let identifier = assetDownloadTask.taskIdentifier
         Task { @MainActor in
             guard let key = self.avTaskKeys[identifier] else { return }
-            self.update(key: key) {
-                $0.progress = progress
-                if $0.state == .queued { $0.state = .downloading }
+            if progress <= 0, let duration = self.keyExpectedDuration[key], duration > 0 {
+                progress = min(loaded / duration, 0.99)
             }
+            self.publishProgress(key: key, fraction: progress)
         }
     }
 }
@@ -370,15 +418,14 @@ extension DownloadManager: URLSessionDownloadDelegate {
         totalBytesExpectedToWrite: Int64
     ) {
         let progress = totalBytesExpectedToWrite > 0
-            ? min(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite), 1)
+            ? min(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite), 0.99)
             : 0
         let identifier = downloadTask.taskIdentifier
         Task { @MainActor in
             guard let key = self.fileTaskKeys[identifier] else { return }
-            self.update(key: key) {
-                $0.progress = progress
-                $0.totalBytes = totalBytesExpectedToWrite
-                if $0.state == .queued { $0.state = .downloading }
+            self.publishProgress(key: key, fraction: progress)
+            if totalBytesExpectedToWrite > 0 {
+                self.update(key: key) { $0.totalBytes = totalBytesExpectedToWrite }
             }
         }
     }
@@ -409,6 +456,10 @@ extension DownloadManager: URLSessionTaskDelegate {
             self.fileTaskKeys[identifier] = nil
             guard let key else { return }
             self.keyToTask[key] = nil
+            self.progressObservations[key]?.invalidate()
+            self.progressObservations[key] = nil
+            self.keyExpectedDuration[key] = nil
+            self.lastProgressPublish[key] = nil
 
             if cancelled {
                 // Cancellation is handled by cancel/delete already.

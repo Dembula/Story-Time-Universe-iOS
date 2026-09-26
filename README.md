@@ -28,6 +28,9 @@ Create matching products in App Store Connect (subscription group + consumable):
 Local StoreKit testing file: `Configuration/Products.storekit`  
 (Scheme → Run → Options → StoreKit Configuration).
 
+Local config uses the **South Africa (ZAF)** storefront with Base at **R29/month** (7-day free trial), Standard R99, Family R149.  
+On device/TestFlight, prices always follow the **App Store account’s country** — set ZA pricing in App Store Connect and use a South African sandbox Apple ID to see Rand instead of dollars.
+
 ### Backend required for production unlock
 
 After a successful Apple purchase the app POSTs to (first 2xx wins):

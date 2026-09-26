@@ -119,6 +119,7 @@ struct ContentDetailView: View {
                     hasTrailer: detail?.hasTrailer == true,
                     trailerImageURLs: detail?.backdropCandidates ?? detail?.posterCandidates ?? [],
                     seasons: detail?.seasons ?? [],
+                    isSeriesLike: (detail?.isSeriesLike == true) || (seed?.isSeriesLike == true),
                     seriesTitle: displayTitle,
                     seriesContentId: contentId,
                     seriesFallbackImageURLs: detail?.posterCandidates ?? detail?.backdropCandidates ?? seed?.posterCandidates ?? [],
@@ -273,7 +274,8 @@ struct ContentDetailView: View {
     }
 
     private func startPlayback(trailer: Bool, episodeId: String?, forceRestart: Bool) {
-        let request = PlaybackRequest(episodeId: episodeId, isTrailer: trailer, forceRestart: forceRestart)
+        let resolvedEpisode = episodeId.flatMap { $0.isEmpty ? nil : $0 } ?? (trailer ? nil : firstEpisodeId)
+        let request = PlaybackRequest(episodeId: resolvedEpisode, isTrailer: trailer, forceRestart: forceRestart)
         if !trailer, ParentalPINGate.needsPinForPlayer {
             pendingPINPlayback = request
             showPlayPIN = true
@@ -578,6 +580,7 @@ private struct DetailBodySections: View {
     let hasTrailer: Bool
     let trailerImageURLs: [URL]
     let seasons: [Season]
+    let isSeriesLike: Bool
     let seriesTitle: String
     let seriesContentId: String
     let seriesFallbackImageURLs: [URL]
@@ -601,9 +604,17 @@ private struct DetailBodySections: View {
     @State private var relatedGlow = false
     @State private var relatedGlowTask: Task<Void, Never>?
 
+    private var hasEpisodeCards: Bool {
+        seasons.contains { !($0.episodes ?? []).isEmpty }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            if !seasons.isEmpty {
+            if hasTrailer {
+                DetailTrailersSection(imageURLs: trailerImageURLs, onPlay: onPlayTrailer)
+            }
+
+            if hasEpisodeCards {
                 DetailEpisodesSection(
                     seasons: seasons,
                     seriesTitle: seriesTitle,
@@ -612,10 +623,13 @@ private struct DetailBodySections: View {
                     contentType: contentType,
                     onPlayEpisode: onPlayEpisode
                 )
-            }
-
-            if hasTrailer {
-                DetailTrailersSection(imageURLs: trailerImageURLs, onPlay: onPlayTrailer)
+            } else if isSeriesLike {
+                // Series with missing season payloads still get a trailer-style Episode 1 preview.
+                DetailSeriesEpisodePreview(
+                    title: seriesTitle,
+                    imageURLs: seriesFallbackImageURLs.isEmpty ? trailerImageURLs : seriesFallbackImageURLs,
+                    onPlay: { onPlayEpisode("") }
+                )
             }
 
             if let synopsis {
@@ -759,6 +773,58 @@ private struct DetailTrailersSection: View {
                 )
             }
             .buttonStyle(.plain)
+        }
+    }
+}
+
+/// Trailer-shaped Episode 1 preview when the API hasn't returned season rows yet.
+private struct DetailSeriesEpisodePreview: View {
+    let title: String
+    let imageURLs: [URL]
+    let onPlay: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Episodes")
+                .font(.title3.bold())
+                .foregroundStyle(Theme.foreground)
+
+            Button(action: onPlay) {
+                ZStack(alignment: .bottomLeading) {
+                    RemoteImage(urls: imageURLs)
+                        .frame(width: 280, height: 158)
+
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.75)],
+                        startPoint: .center,
+                        endPoint: .bottom
+                    )
+
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 44))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    Text("Episode 1")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(12)
+                }
+                .frame(width: 280, height: 158)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Play Episode 1")
+
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Theme.muted)
+                .lineLimit(1)
+                .frame(width: 280, alignment: .leading)
         }
     }
 }
@@ -956,6 +1022,7 @@ private struct DetailEpisodesSection: View {
                         .foregroundStyle(Theme.muted)
                         .padding(.vertical, 8)
                 } else {
+                    // Trailer-style horizontal previews (same shape as Official Trailer cards).
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 14) {
                             ForEach(Array(episodes.enumerated()), id: \.element.id) { idx, episode in
@@ -1010,63 +1077,58 @@ private struct EpisodePosterCard: View {
             Button(action: onPlay) {
                 ZStack(alignment: .bottomLeading) {
                     RemoteImage(urls: thumbURLs)
-                        .frame(width: 220, height: 124)
+                        .frame(width: 280, height: 158)
                         .background(Color.white.opacity(0.06))
 
                     LinearGradient(
-                        colors: [.clear, .black.opacity(0.78)],
+                        colors: [.clear, .black.opacity(0.75)],
                         startPoint: .center,
                         endPoint: .bottom
                     )
 
                     Image(systemName: "play.circle.fill")
-                        .font(.system(size: 34))
-                        .foregroundStyle(.white.opacity(0.92))
+                        .font(.system(size: 44))
+                        .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.45), radius: 6, y: 1)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("EPISODE \(episodeNumber)")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.white.opacity(0.8))
-                        Text(episode.title ?? "Episode \(episodeNumber)")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                    }
-                    .padding(10)
+                    Text(episode.title?.isEmpty == false ? (episode.title ?? "Episode \(episodeNumber)") : "Episode \(episodeNumber)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .padding(12)
                 }
-                .frame(width: 220, height: 124)
+                .frame(width: 280, height: 158)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Theme.accent.opacity(0.22), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Play Episode \(episodeNumber)")
+
+            HStack(spacing: 10) {
+                Text("EPISODE \(episodeNumber)")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Theme.accent)
+                if let duration = episode.duration, duration > 0 {
+                    Text("\(duration)m")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Theme.muted)
+                }
+                Spacer(minLength: 0)
+                DownloadButton(spec: downloadSpec, style: .icon)
+            }
+            .frame(width: 280)
 
             if let description = episode.description, !description.isEmpty {
                 Text(description)
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
                     .lineLimit(2)
-                    .frame(width: 220, alignment: .leading)
+                    .frame(width: 280, alignment: .leading)
             }
-
-            HStack {
-                if let duration = episode.duration, duration > 0 {
-                    Label("\(duration)m", systemImage: "play.fill")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.85))
-                } else {
-                    Text("Episode \(episodeNumber)")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Theme.muted)
-                }
-                Spacer()
-                DownloadButton(spec: downloadSpec, style: .icon)
-            }
-            .frame(width: 220)
         }
     }
 }

@@ -41,6 +41,8 @@ struct PlayerContainerView: View {
     @State private var scrubPosition: Double = 0
     @State private var scrubDuration: Double = 1
     @State private var resolvedEpisodes: [EpisodePlaybackInfo] = []
+    /// Fit (letterbox) vs fill (crop edges to cover the screen). Toggle only — no pinch zoom.
+    @State private var fillsScreen = false
 
     private let haptic = UIImpactFeedbackGenerator(style: .light)
 
@@ -53,8 +55,9 @@ struct PlayerContainerView: View {
             Color.black.ignoresSafeArea()
 
             if let player = model.player {
-                PlayerLayerView(player: player)
+                PlayerLayerView(player: player, fillScreen: fillsScreen)
                     .ignoresSafeArea()
+                    .clipped()
 
                 playerGestureLayer
 
@@ -355,6 +358,24 @@ struct PlayerContainerView: View {
             }
 
             Spacer(minLength: 8)
+
+            Button {
+                lightHaptic()
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    fillsScreen.toggle()
+                }
+                showControls(persistent: false)
+            } label: {
+                Image(systemName: fillsScreen
+                      ? "arrow.down.right.and.arrow.up.left"
+                      : "arrow.up.left.and.arrow.down.right")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(fillsScreen ? Theme.accent : .white)
+                    .frame(width: 36, height: 36)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(fillsScreen ? "Fit to screen" : "Fill screen")
 
             if !model.subtitles.availableTracks.isEmpty {
                 Button {
@@ -988,12 +1009,15 @@ private struct BrightnessSlider: View {
 
 private struct PlayerLayerView: UIViewRepresentable {
     let player: AVPlayer
+    /// `true` = crop to fill the screen; `false` = fit with letterboxing (default).
+    var fillScreen: Bool = false
 
     func makeUIView(context: Context) -> PlayerUIView {
         let view = PlayerUIView()
         view.playerLayer.player = player
-        view.playerLayer.videoGravity = .resizeAspect
+        view.playerLayer.videoGravity = fillScreen ? .resizeAspectFill : .resizeAspect
         view.backgroundColor = .black
+        view.clipsToBounds = true
         PictureInPictureManager.shared.attach(playerLayer: view.playerLayer)
         return view
     }
@@ -1001,6 +1025,13 @@ private struct PlayerLayerView: UIViewRepresentable {
     func updateUIView(_ uiView: PlayerUIView, context: Context) {
         if uiView.playerLayer.player !== player {
             uiView.playerLayer.player = player
+        }
+        let gravity: AVLayerVideoGravity = fillScreen ? .resizeAspectFill : .resizeAspect
+        if uiView.playerLayer.videoGravity != gravity {
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(0.2)
+            uiView.playerLayer.videoGravity = gravity
+            CATransaction.commit()
         }
         PictureInPictureManager.shared.attach(playerLayer: uiView.playerLayer)
     }

@@ -54,37 +54,37 @@ struct RootView: View {
 /// Full-screen offline entry when catalogue/network isn't available.
 struct OfflineDownloadsGate: View {
     @EnvironmentObject private var appState: AppState
+    @ObservedObject private var network = NetworkMonitor.shared
 
     var body: some View {
-        NavigationStack {
-            DownloadsView()
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        if appState.session?.user != nil {
-                            Button("Back") { appState.leaveOfflineLibrary() }
-                        }
+        DownloadsView()
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if appState.session?.user != nil {
+                        Button("Back") { appState.leaveOfflineLibrary() }
                     }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        if NetworkMonitor.shared.isOnline {
-                            Button("Sign In") {
-                                appState.route = .signIn
-                            }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if network.isOnline {
+                        Button("Sign In") {
+                            appState.route = .signIn
                         }
                     }
                 }
-                .safeAreaInset(edge: .top) {
-                    if !NetworkMonitor.shared.isOnline {
+                ToolbarItem(placement: .principal) {
+                    if !network.isOnline {
                         Text("You're offline · Downloads only")
-                            .font(.caption.weight(.semibold))
+                            .font(.caption2.weight(.semibold))
                             .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(Theme.accent.opacity(0.9))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Theme.accent, in: Capsule())
                     }
                 }
-                .onAppear {
-                    DownloadManager.shared.validateOfflineLibrary()
-                }
-        }
+            }
+            .onAppear {
+                DownloadManager.shared.validateOfflineLibrary()
+            }
     }
 }

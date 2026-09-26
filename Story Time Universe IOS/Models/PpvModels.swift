@@ -30,6 +30,21 @@ extension ViewerSubscription {
         return Self.looksLikePayPerView(model) || Self.looksLikePayPerView(plan)
     }
 
+    /// Trial / intro period — always enforce the plan's profile cap (Base trial = 1).
+    var isTrialing: Bool {
+        let s = status?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
+        return s == "TRIALING" || s == "TRIAL" || s.contains("TRIAL")
+    }
+
+    /// Effective profile slots for this subscription (server value clamped to plan rules).
+    var effectiveProfileLimit: Int {
+        let fromPlan = StoreProducts.profileLimit(forPlanCode: plan)
+        let fromServer = profileLimit.flatMap { $0 > 0 ? $0 : nil }
+        let resolved = min(fromServer ?? fromPlan, fromPlan)
+        // Never allow more profiles than the purchased/trial plan allows.
+        return max(1, resolved)
+    }
+
     private static func looksLikePayPerView(_ value: String) -> Bool {
         guard !value.isEmpty else { return false }
         if value == "PPV" || value == "PPV_FILM" || value == "PAY_PER_VIEW" { return true }

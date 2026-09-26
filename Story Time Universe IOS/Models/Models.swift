@@ -391,8 +391,33 @@ nonisolated struct Season: Decodable, Hashable {
         }
         title = try c.decodeIfPresent(String.self, forKey: .title)
         seasonNumber = Self.firstInt(c, keys: [.seasonNumber, .season_number, .number])
-        episodes = try? c.decode([Episode].self, forKey: .episodes)
+        episodes = Self.decodeEpisodes(from: c)
     }
+
+    private static func decodeEpisodes(from c: KeyedDecodingContainer<CodingKeys>) -> [Episode]? {
+        guard c.contains(.episodes) else { return nil }
+        // Prefer full array; fall back to lossy per-item so one bad episode doesn't wipe the season.
+        if let all = try? c.decode([Episode].self, forKey: .episodes) {
+            return all
+        }
+        var unkeyed: UnkeyedDecodingContainer
+        do {
+            unkeyed = try c.nestedUnkeyedContainer(forKey: .episodes)
+        } catch {
+            return nil
+        }
+        var items: [Episode] = []
+        while !unkeyed.isAtEnd {
+            if let ep = try? unkeyed.decode(Episode.self) {
+                items.append(ep)
+            } else {
+                _ = try? unkeyed.decode(LossySkip.self)
+            }
+        }
+        return items
+    }
+
+    private struct LossySkip: Decodable {}
 
     private static func firstInt(_ c: KeyedDecodingContainer<CodingKeys>, keys: [CodingKeys]) -> Int? {
         for key in keys {
@@ -484,6 +509,11 @@ nonisolated struct ContentDetail: Decodable, Identifiable, Hashable {
         return true
     }
 
+    var isSeriesLike: Bool {
+        let t = (type ?? "").uppercased()
+        return t == "SERIES" || t == "SHOW" || t == "WEB_SERIES" || t.contains("SERIES")
+    }
+
     var runtimeLabel: String? {
         guard let duration, duration > 0 else { return nil }
         let hours = duration / 60
@@ -565,9 +595,33 @@ nonisolated struct ContentDetail: Decodable, Identifiable, Hashable {
         ageRating = try c.decodeIfPresent(String.self, forKey: .ageRating)
         creator = try c.decodeIfPresent(CreatorInfo.self, forKey: .creator)
         ratingStats = try c.decodeIfPresent(RatingStats.self, forKey: .ratingStats)
-        seasons = try? c.decodeIfPresent([Season].self, forKey: .seasons)
+        seasons = Self.decodeSeasons(from: c)
         btsVideos = try c.decodeIfPresent([BtsVideo].self, forKey: .btsVideos)
     }
+
+    private static func decodeSeasons(from c: KeyedDecodingContainer<CodingKeys>) -> [Season]? {
+        guard c.contains(.seasons) else { return nil }
+        if let all = try? c.decode([Season].self, forKey: .seasons) {
+            return all
+        }
+        var unkeyed: UnkeyedDecodingContainer
+        do {
+            unkeyed = try c.nestedUnkeyedContainer(forKey: .seasons)
+        } catch {
+            return nil
+        }
+        var items: [Season] = []
+        while !unkeyed.isAtEnd {
+            if let season = try? unkeyed.decode(Season.self) {
+                items.append(season)
+            } else {
+                _ = try? unkeyed.decode(LossySkip.self)
+            }
+        }
+        return items.isEmpty ? nil : items
+    }
+
+    private struct LossySkip: Decodable {}
 
     private static func flexInt(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Int? {
         if let v = try? c.decodeIfPresent(Int.self, forKey: key) { return v }

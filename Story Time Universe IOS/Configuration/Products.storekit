@@ -5,14 +5,14 @@
   ],
   "products" : [
     {
-      "displayPrice" : "4.99",
+      "displayPrice" : "49.00",
       "familyShareable" : false,
       "internalID" : "64A1PPVU01",
       "localizations" : [
         {
           "description" : "Unlock one title on Story Time Universe.",
           "displayName" : "Title Unlock",
-          "locale" : "en_US"
+          "locale" : "en_ZA"
         }
       ],
       "productID" : "com.storytime.universe.ppv.unlock",
@@ -22,6 +22,8 @@
   ],
   "settings" : {
     "_failTransactionsEnabled" : false,
+    "_locale" : "en_ZA",
+    "_storefront" : "ZAF",
     "_storeKitErrors" : [
 
     ]
@@ -33,7 +35,7 @@
         {
           "description" : "Story Time Universe streaming plans",
           "displayName" : "Story Time Universe",
-          "locale" : "en_US"
+          "locale" : "en_ZA"
         }
       ],
       "name" : "Story Time Universe",
@@ -45,16 +47,22 @@
           "codeOffers" : [
 
           ],
-          "displayPrice" : "4.99",
+          "displayPrice" : "29.00",
           "familyShareable" : false,
           "groupNumber" : 1,
           "internalID" : "64A1BASEM1",
-          "introductoryOffer" : null,
+          "introductoryOffer" : {
+            "displayPrice" : "0",
+            "internalID" : "64A1BASEM1FREE",
+            "numberOfPeriods" : 1,
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1W"
+          },
           "localizations" : [
             {
-              "description" : "1 profile. Stream the Story Time catalogue.",
+              "description" : "1 profile. 7-day free trial, then R29/month. Stream the Story Time catalogue.",
               "displayName" : "Base Monthly",
-              "locale" : "en_US"
+              "locale" : "en_ZA"
             }
           ],
           "productID" : "com.storytime.universe.sub.base.monthly",
@@ -73,7 +81,7 @@
           "codeOffers" : [
 
           ],
-          "displayPrice" : "9.99",
+          "displayPrice" : "99.00",
           "familyShareable" : false,
           "groupNumber" : 2,
           "internalID" : "64A1STDRM1",
@@ -82,7 +90,7 @@
             {
               "description" : "3 profiles. Stream the Story Time catalogue.",
               "displayName" : "Standard Monthly",
-              "locale" : "en_US"
+              "locale" : "en_ZA"
             }
           ],
           "productID" : "com.storytime.universe.sub.standard.monthly",
@@ -101,7 +109,7 @@
           "codeOffers" : [
 
           ],
-          "displayPrice" : "14.99",
+          "displayPrice" : "149.00",
           "familyShareable" : false,
           "groupNumber" : 3,
           "internalID" : "64A1FMLYM1",
@@ -110,7 +118,7 @@
             {
               "description" : "5 profiles. Stream the Story Time catalogue.",
               "displayName" : "Family Monthly",
-              "locale" : "en_US"
+              "locale" : "en_ZA"
             }
           ],
           "productID" : "com.storytime.universe.sub.family.monthly",
@@ -129,16 +137,22 @@
           "codeOffers" : [
 
           ],
-          "displayPrice" : "49.99",
+          "displayPrice" : "290.00",
           "familyShareable" : false,
           "groupNumber" : 1,
           "internalID" : "64A1BASEY1",
-          "introductoryOffer" : null,
+          "introductoryOffer" : {
+            "displayPrice" : "0",
+            "internalID" : "64A1BASEY1FREE",
+            "numberOfPeriods" : 1,
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1W"
+          },
           "localizations" : [
             {
-              "description" : "1 profile. Billed yearly.",
+              "description" : "1 profile. 7-day free trial, then billed yearly.",
               "displayName" : "Base Yearly",
-              "locale" : "en_US"
+              "locale" : "en_ZA"
             }
           ],
           "productID" : "com.storytime.universe.sub.base.yearly",
@@ -157,7 +171,7 @@
           "codeOffers" : [
 
           ],
-          "displayPrice" : "99.99",
+          "displayPrice" : "990.00",
           "familyShareable" : false,
           "groupNumber" : 2,
           "internalID" : "64A1STDRY1",
@@ -166,7 +180,7 @@
             {
               "description" : "3 profiles. Billed yearly.",
               "displayName" : "Standard Yearly",
-              "locale" : "en_US"
+              "locale" : "en_ZA"
             }
           ],
           "productID" : "com.storytime.universe.sub.standard.yearly",
@@ -185,7 +199,7 @@
           "codeOffers" : [
 
           ],
-          "displayPrice" : "149.99",
+          "displayPrice" : "1490.00",
           "familyShareable" : false,
           "groupNumber" : 3,
           "internalID" : "64A1FMLYY1",
@@ -194,7 +208,7 @@
             {
               "description" : "5 profiles. Billed yearly.",
               "displayName" : "Family Yearly",
-              "locale" : "en_US"
+              "locale" : "en_ZA"
             }
           ],
           "productID" : "com.storytime.universe.sub.family.yearly",

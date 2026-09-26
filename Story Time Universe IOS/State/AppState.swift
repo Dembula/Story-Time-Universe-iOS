@@ -69,6 +69,15 @@ final class AppState: ObservableObject {
         return false
     }
 
+    /// Max profiles allowed by the current subscription / trial plan (Base = 1).
+    var allowedProfileCount: Int {
+        if let limit = subscription?.effectiveProfileLimit { return limit }
+        if let productID = StoreService.shared.activeSubscriptionProductID {
+            return StoreProducts.profileLimit(forProductId: productID)
+        }
+        return 1
+    }
+
     /// Always land on profiles after auth — never auto-enter last profile on launch.
     func bootstrap() async {
         OrientationLock.unlockPortrait()

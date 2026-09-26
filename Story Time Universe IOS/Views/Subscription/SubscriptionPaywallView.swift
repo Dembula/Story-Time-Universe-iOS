@@ -299,8 +299,17 @@ struct SubscriptionPaywallView: View {
                                     .foregroundStyle(Theme.accent)
                                     .clipShape(Capsule())
                             }
+                            if let trialLabel = freeTrialLabel(for: product) {
+                                Text(trialLabel)
+                                    .font(.caption2.weight(.bold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.green.opacity(0.2))
+                                    .foregroundStyle(Color.green.opacity(0.95))
+                                    .clipShape(Capsule())
+                            }
                         }
-                        Text(product.displayPrice + periodSuffix(for: product))
+                        Text(priceLine(for: product))
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Theme.accentGold)
                     }
@@ -357,6 +366,39 @@ struct SubscriptionPaywallView: View {
         let value = period.value
         if value == 1 { return " / \(unit)" }
         return " / \(value) \(unit)s"
+    }
+
+    /// Prefer StoreKit's localized `displayPrice` (storefront currency). Never hardcode USD.
+    private func priceLine(for product: Product) -> String {
+        let base = product.displayPrice + periodSuffix(for: product)
+        if let trial = freeTrialLabel(for: product) {
+            return "\(trial) · then \(base)"
+        }
+        return base
+    }
+
+    private func freeTrialLabel(for product: Product) -> String? {
+        guard let offer = product.subscription?.introductoryOffer,
+              offer.paymentMode == .free
+        else {
+            // StoreKit config / ASC may lag; still advertise Base trial in UI copy.
+            if StoreProducts.includesFreeTrial(product.id) {
+                return "7-day free trial"
+            }
+            return nil
+        }
+        let periods = offer.periodCount
+        let unit = offer.period.unit
+        let unitLabel: String
+        switch unit {
+        case .day: unitLabel = periods == 1 ? "day" : "days"
+        case .week: unitLabel = periods == 1 ? "week" : "weeks"
+        case .month: unitLabel = periods == 1 ? "month" : "months"
+        case .year: unitLabel = periods == 1 ? "year" : "years"
+        @unknown default: unitLabel = "period"
+        }
+        let count = offer.period.value * periods
+        return "\(count)-\(unitLabel) free trial"
     }
 
     // MARK: - Legal

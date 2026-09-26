@@ -3,6 +3,7 @@ import SwiftUI
 struct DownloadsView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var downloads = DownloadManager.shared
+    @ObservedObject private var network = NetworkMonitor.shared
     @State private var playback: DownloadPlayback?
     @State private var showPlayPIN = false
     @State private var pendingPlayback: DownloadPlayback?
@@ -17,17 +18,35 @@ struct DownloadsView: View {
                     emptyState
                 } else {
                     List {
+                        if !network.isOnline {
+                            Section {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "wifi.slash")
+                                        .font(.caption.weight(.semibold))
+                                    Text("You're offline · Downloads only")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                                .listRowBackground(
+                                    Theme.accent
+                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                )
+                            }
+                        }
                         if !active.isEmpty {
                             Section("Downloading") {
                                 ForEach(active) { record in
-                                    DownloadRow(record: record, isActive: true) {}
+                                    DownloadRow(recordKey: record.key, isActive: true) {}
                                 }
                             }
                         }
                         if !completed.isEmpty {
                             Section("Available Offline") {
                                 ForEach(completed) { record in
-                                    DownloadRow(record: record, isActive: false) {
+                                    DownloadRow(recordKey: record.key, isActive: false) {
                                         play(record)
                                     }
                                     .swipeActions {
@@ -48,6 +67,7 @@ struct DownloadsView: View {
             }
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Downloads")
+            .navigationBarTitleDisplayMode(.large)
             .toolbarColorScheme(.dark, for: .navigationBar)
         }
         .fullScreenCover(item: $playback) { item in
@@ -140,14 +160,18 @@ private struct DownloadPlayback: Identifiable {
 }
 
 private struct DownloadRow: View {
-    let record: DownloadRecord
+    let recordKey: String
     let isActive: Bool
     let onTap: () -> Void
 
     @ObservedObject private var downloads = DownloadManager.shared
 
+    private var record: DownloadRecord? {
+        downloads.record(forKey: recordKey)
+    }
+
     private var posterURLs: [URL] {
-        MediaURL.candidates(posterUrl: record.posterUrl, backdropUrl: nil, videoUrl: nil, preferBackdrop: record.episodeId != nil)
+        MediaURL.candidates(posterUrl: record?.posterUrl, backdropUrl: nil, videoUrl: nil, preferBackdrop: record?.episodeId != nil)
     }
 
     var body: some View {
@@ -167,11 +191,11 @@ private struct DownloadRow: View {
                 .frame(width: 112, height: 64)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(record.title)
+                    Text(record?.title ?? "Download")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.foreground)
                         .lineLimit(1)
-                    if let subtitle = record.subtitle {
+                    if let subtitle = record?.subtitle {
                         Text(subtitle)
                             .font(.caption)
                             .foregroundStyle(Theme.muted)
@@ -190,7 +214,7 @@ private struct DownloadRow: View {
 
                 if isActive {
                     Button {
-                        downloads.cancelDownload(key: record.key)
+                        downloads.cancelDownload(key: recordKey)
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.title3)
@@ -207,25 +231,30 @@ private struct DownloadRow: View {
 
     @ViewBuilder
     private var statusLine: some View {
-        switch record.state {
+        let progress = record?.progress ?? 0
+        switch record?.state {
         case .failed:
-            Button("Tap to retry") { downloads.startDownload(retrySpec) }
+            Button("Tap to retry") {
+                if let record {
+                    downloads.startDownload(retrySpec(for: record))
+                }
+            }
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.orange)
                 .buttonStyle(.plain)
         default:
             HStack(spacing: 6) {
-                ProgressView(value: record.progress)
+                ProgressView(value: max(progress, 0.02))
                     .tint(Theme.accent)
                     .frame(width: 90)
-                Text("\(Int(record.progress * 100))%")
+                Text("\(Int(progress * 100))%")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(Theme.muted)
             }
         }
     }
 
-    private var retrySpec: DownloadSpec {
+    private func retrySpec(for record: DownloadRecord) -> DownloadSpec {
         DownloadSpec(
             contentId: record.contentId,
             episodeId: record.episodeId,

@@ -55,14 +55,37 @@ nonisolated enum StoreProducts {
         }
     }
 
+    /// Resolve profile limit from a server plan code (`BASE_1`, `STANDARD_3`, …).
+    static func profileLimit(forPlanCode plan: String?) -> Int {
+        let code = plan?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
+        switch code {
+        case "BASE_1", "BASE": return 1
+        case "STANDARD_3", "STANDARD": return 3
+        case "FAMILY_5", "FAMILY": return 5
+        default:
+            if code.contains("FAMILY") { return 5 }
+            if code.contains("STANDARD") { return 3 }
+            return 1
+        }
+    }
+
+    /// Base (R29) plans include a free trial in App Store Connect / StoreKit config.
+    static func includesFreeTrial(productId: String) -> Bool {
+        productId == baseMonthly || productId == baseYearly
+    }
+
     static func features(forProductId productId: String) -> [String] {
         let limit = profileLimit(forProductId: productId)
-        return [
+        var list = [
             "Stream Story Time catalogue",
             "\(limit) profile\(limit == 1 ? "" : "s")",
             "Continue watching & downloads",
-            "Cancel anytime in App Store settings",
         ]
+        if includesFreeTrial(productId) {
+            list.insert("7-day free trial", at: 0)
+        }
+        list.append("Cancel anytime in App Store settings")
+        return list
     }
 
     static func isSubscription(_ productId: String) -> Bool {
