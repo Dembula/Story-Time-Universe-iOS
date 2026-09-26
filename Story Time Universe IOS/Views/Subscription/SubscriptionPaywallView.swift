@@ -382,7 +382,7 @@ struct SubscriptionPaywallView: View {
               offer.paymentMode == .free
         else {
             // StoreKit config / ASC may lag; still advertise Base trial in UI copy.
-            if StoreProducts.includesFreeTrial(product.id) {
+            if StoreProducts.includesFreeTrial(productId: product.id) {
                 return "7-day free trial"
             }
             return nil

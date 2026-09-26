@@ -81,7 +81,7 @@ nonisolated enum StoreProducts {
             "\(limit) profile\(limit == 1 ? "" : "s")",
             "Continue watching & downloads",
         ]
-        if includesFreeTrial(productId) {
+        if includesFreeTrial(productId: productId) {
             list.insert("7-day free trial", at: 0)
         }
         list.append("Cancel anytime in App Store settings")
