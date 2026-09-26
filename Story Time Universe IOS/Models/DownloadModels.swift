@@ -11,6 +11,9 @@ nonisolated enum DownloadState: String, Codable, Hashable {
 /// Metadata for an offline download. The media itself lives in the app's private
 /// container (an iOS-managed `.movpkg` for HLS, or a sandboxed file for progressive
 /// video) — never in the Files app and never exportable.
+///
+/// Each record is owned by one viewer account (`ownerAccountId`). Only that account
+/// may list or play the download; signed-out / other accounts see nothing.
 nonisolated struct DownloadRecord: Codable, Identifiable, Hashable {
     let key: String
     let contentId: String
@@ -30,8 +33,96 @@ nonisolated struct DownloadRecord: Codable, Identifiable, Hashable {
     var durationSeconds: Int?
     var seasonNumber: Int?
     var episodeNumber: Int?
+    /// Stable account id (user id, else email) that owns this download.
+    var ownerAccountId: String?
 
     var id: String { key }
+
+    enum CodingKeys: String, CodingKey {
+        case key, contentId, episodeId, title, subtitle, posterUrl, type
+        case relativePath, isHLS, state, progress, totalBytes, createdAt
+        case durationSeconds, seasonNumber, episodeNumber, ownerAccountId
+    }
+
+    init(
+        key: String,
+        contentId: String,
+        episodeId: String?,
+        title: String,
+        subtitle: String?,
+        posterUrl: String?,
+        type: String?,
+        relativePath: String?,
+        isHLS: Bool,
+        state: DownloadState,
+        progress: Double,
+        totalBytes: Int64,
+        createdAt: Date,
+        durationSeconds: Int?,
+        seasonNumber: Int?,
+        episodeNumber: Int?,
+        ownerAccountId: String?
+    ) {
+        self.key = key
+        self.contentId = contentId
+        self.episodeId = episodeId
+        self.title = title
+        self.subtitle = subtitle
+        self.posterUrl = posterUrl
+        self.type = type
+        self.relativePath = relativePath
+        self.isHLS = isHLS
+        self.state = state
+        self.progress = progress
+        self.totalBytes = totalBytes
+        self.createdAt = createdAt
+        self.durationSeconds = durationSeconds
+        self.seasonNumber = seasonNumber
+        self.episodeNumber = episodeNumber
+        self.ownerAccountId = ownerAccountId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        contentId = try c.decode(String.self, forKey: .contentId)
+        episodeId = try c.decodeIfPresent(String.self, forKey: .episodeId)
+        title = try c.decode(String.self, forKey: .title)
+        subtitle = try c.decodeIfPresent(String.self, forKey: .subtitle)
+        posterUrl = try c.decodeIfPresent(String.self, forKey: .posterUrl)
+        type = try c.decodeIfPresent(String.self, forKey: .type)
+        relativePath = try c.decodeIfPresent(String.self, forKey: .relativePath)
+        isHLS = try c.decodeIfPresent(Bool.self, forKey: .isHLS) ?? true
+        state = try c.decodeIfPresent(DownloadState.self, forKey: .state) ?? .failed
+        progress = try c.decodeIfPresent(Double.self, forKey: .progress) ?? 0
+        totalBytes = try c.decodeIfPresent(Int64.self, forKey: .totalBytes) ?? 0
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        durationSeconds = try c.decodeIfPresent(Int.self, forKey: .durationSeconds)
+        seasonNumber = try c.decodeIfPresent(Int.self, forKey: .seasonNumber)
+        episodeNumber = try c.decodeIfPresent(Int.self, forKey: .episodeNumber)
+        ownerAccountId = try c.decodeIfPresent(String.self, forKey: .ownerAccountId)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(key, forKey: .key)
+        try c.encode(contentId, forKey: .contentId)
+        try c.encodeIfPresent(episodeId, forKey: .episodeId)
+        try c.encode(title, forKey: .title)
+        try c.encodeIfPresent(subtitle, forKey: .subtitle)
+        try c.encodeIfPresent(posterUrl, forKey: .posterUrl)
+        try c.encodeIfPresent(type, forKey: .type)
+        try c.encodeIfPresent(relativePath, forKey: .relativePath)
+        try c.encode(isHLS, forKey: .isHLS)
+        try c.encode(state, forKey: .state)
+        try c.encode(progress, forKey: .progress)
+        try c.encode(totalBytes, forKey: .totalBytes)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(durationSeconds, forKey: .durationSeconds)
+        try c.encodeIfPresent(seasonNumber, forKey: .seasonNumber)
+        try c.encodeIfPresent(episodeNumber, forKey: .episodeNumber)
+        try c.encodeIfPresent(ownerAccountId, forKey: .ownerAccountId)
+    }
 
     /// Resolves a playable local file/directory on disk.
     var localURL: URL? {

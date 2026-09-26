@@ -4,18 +4,30 @@ import Foundation
 
 /// Manages offline downloads for in-app-only playback.
 ///
-/// HLS titles are stored as an iOS-managed `.movpkg` via `AVAssetDownloadURLSession`
-/// (the same mechanism Netflix/TV+ use). Progressive fallbacks are written into the
-/// app's Application Support container. Neither location is exposed to the Files app,
-/// and the media can't be shared or exported as a plain mp4.
+/// Downloads are **account-scoped**: only the signed-in owner can list or play them.
+/// Signing out clears access (files stay on disk for that account’s next login).
+/// Another account never sees or plays someone else’s downloads.
+///
+/// HLS titles are stored as an iOS-managed `.movpkg` via `AVAssetDownloadURLSession`.
+/// Progressive fallbacks are written into Application Support. Neither is exposed
+/// to the Files app.
 @MainActor
 final class DownloadManager: NSObject, ObservableObject {
     static let shared = DownloadManager()
 
+    private static let offlineAccountDefaultsKey = "downloads.offlineAccountId"
+
+    /// Content-key → record for the **active** account only (empty when signed out).
     @Published private(set) var records: [String: DownloadRecord] = [:]
+
+    /// Account currently allowed to see/play downloads (`nil` = signed out → no access).
+    private(set) var activeAccountId: String?
 
     /// Set by the app delegate when iOS relaunches us to finish background transfers.
     var backgroundCompletionHandler: (() -> Void)?
+
+    /// Full library across accounts. Key = `owner::contentKey`.
+    private var library: [String: DownloadRecord] = [:]
 
     private var avSession: AVAssetDownloadURLSession!
     private var fileSession: URLSession!
@@ -23,7 +35,6 @@ final class DownloadManager: NSObject, ObservableObject {
     private var avTaskKeys: [Int: String] = [:]
     private var fileTaskKeys: [Int: String] = [:]
     private var keyToTask: [String: URLSessionTask] = [:]
-    /// Expected duration (seconds) for progress fallback when HLS doesn't report ranges.
     private var keyExpectedDuration: [String: Double] = [:]
     private var progressObservations: [String: NSKeyValueObservation] = [:]
     private var lastProgressPublish: [String: Date] = [:]
@@ -54,7 +65,12 @@ final class DownloadManager: NSObject, ObservableObject {
         fileConfig.allowsCellularAccess = true
         fileSession = URLSession(configuration: fileConfig, delegate: self, delegateQueue: .main)
 
-        loadRecords()
+        loadLibrary()
+        // Restore last signed-in account for offline cold start (cleared on logout).
+        if let saved = UserDefaults.standard.string(forKey: Self.offlineAccountDefaultsKey), !saved.isEmpty {
+            activeAccountId = saved
+        }
+        publishActiveRecords()
         validateOfflineLibrary()
         reconnectInFlightTasks()
     }
@@ -64,7 +80,50 @@ final class DownloadManager: NSObject, ObservableObject {
         return contentId
     }
 
-    // MARK: - Queries
+    private static func libraryKey(owner: String, contentKey: String) -> String {
+        "\(owner)::\(contentKey)"
+    }
+
+    // MARK: - Account binding
+
+    /// Bind downloads to this account (sign-in / session restore). Pass `nil` on logout.
+    func bindAccount(_ accountId: String?) {
+        let trimmed = accountId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolved = (trimmed?.isEmpty == false) ? trimmed : nil
+        activeAccountId = resolved
+        if let resolved {
+            UserDefaults.standard.set(resolved, forKey: Self.offlineAccountDefaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.offlineAccountDefaultsKey)
+        }
+        publishActiveRecords()
+    }
+
+    /// Sign-out: revoke access immediately (files kept for the same account later).
+    func clearAccountAccess() {
+        bindAccount(nil)
+    }
+
+    /// Permanently remove every download owned by this account (e.g. account deletion).
+    func wipeDownloads(forAccount accountId: String) {
+        let owned = library.filter { $0.value.ownerAccountId == accountId }
+        for (libKey, record) in owned {
+            keyToTask[libKey]?.cancel()
+            keyToTask[libKey] = nil
+            progressObservations[libKey]?.invalidate()
+            progressObservations[libKey] = nil
+            if let url = record.localURL {
+                try? FileManager.default.removeItem(at: url)
+            }
+            library.removeValue(forKey: libKey)
+        }
+        if activeAccountId == accountId {
+            publishActiveRecords()
+        }
+        saveLibrary()
+    }
+
+    // MARK: - Queries (active account only)
 
     func record(forKey key: String) -> DownloadRecord? { records[key] }
 
@@ -72,9 +131,10 @@ final class DownloadManager: NSObject, ObservableObject {
         records[Self.makeKey(contentId: contentId, episodeId: episodeId)]
     }
 
-    /// A local asset to play offline, or nil if not downloaded.
+    /// A local asset to play offline for the **active** account, or nil.
     func offlineAsset(contentId: String, episodeId: String?) -> AVURLAsset? {
-        guard let record = record(contentId: contentId, episodeId: episodeId),
+        guard activeAccountId != nil,
+              let record = record(contentId: contentId, episodeId: episodeId),
               record.isPlayableOffline,
               let url = record.localURL,
               FileManager.default.fileExists(atPath: url.path)
@@ -92,19 +152,25 @@ final class DownloadManager: NSObject, ObservableObject {
             .sorted { $0.createdAt > $1.createdAt }
     }
 
+    var hasPlayableDownloadsForActiveAccount: Bool {
+        !completedRecords.isEmpty
+    }
+
     // MARK: - Start / cancel / delete
 
     func startDownload(_ spec: DownloadSpec) {
-        if ParentalControls.shared.blockDownloads {
-            return
-        }
-        let key = spec.key
-        if let existing = records[key], existing.state == .completed || existing.state == .downloading || existing.state == .queued {
+        if ParentalControls.shared.blockDownloads { return }
+        guard let owner = activeAccountId, !owner.isEmpty else { return }
+
+        let contentKey = spec.key
+        let libKey = Self.libraryKey(owner: owner, contentKey: contentKey)
+        if let existing = library[libKey],
+           existing.state == .completed || existing.state == .downloading || existing.state == .queued {
             return
         }
 
-        var record = DownloadRecord(
-            key: key,
+        let record = DownloadRecord(
+            key: contentKey,
             contentId: spec.contentId,
             episodeId: spec.episodeId,
             title: spec.title,
@@ -119,15 +185,16 @@ final class DownloadManager: NSObject, ObservableObject {
             createdAt: Date(),
             durationSeconds: spec.durationSeconds,
             seasonNumber: spec.seasonNumber,
-            episodeNumber: spec.episodeNumber
+            episodeNumber: spec.episodeNumber,
+            ownerAccountId: owner
         )
-        records[key] = record
-        saveRecords()
+        library[libKey] = record
+        publishActiveRecords()
+        saveLibrary()
         if let seconds = spec.durationSeconds, seconds > 0 {
-            keyExpectedDuration[key] = Double(seconds)
+            keyExpectedDuration[libKey] = Double(seconds)
         }
 
-        // Warm the poster into the disk cache so it shows while offline.
         if let poster = spec.posterUrl {
             let urls = MediaURL.candidates(posterUrl: poster, backdropUrl: nil, videoUrl: nil, preferBackdrop: false)
             Task { await ImageLoader.shared.prefetch(urls: urls, preferPortrait: true) }
@@ -142,24 +209,25 @@ final class DownloadManager: NSObject, ObservableObject {
                     trailer: false
                 )
                 guard let url = bundle.streamURL else {
-                    self.fail(key: key)
+                    self.fail(libraryKey: libKey)
                     return
                 }
                 let isHLS = (bundle.playback?.type?.contains("mpegurl") ?? false)
                     || url.absoluteString.contains(".m3u8")
-                self.beginTransfer(key: key, url: url, title: spec.title, isHLS: isHLS)
+                self.beginTransfer(libraryKey: libKey, url: url, title: spec.title, isHLS: isHLS)
             } catch {
-                self.fail(key: key)
+                self.fail(libraryKey: libKey)
             }
         }
     }
 
-    private func beginTransfer(key: String, url: URL, title: String, isHLS: Bool) {
-        guard var record = records[key] else { return }
+    private func beginTransfer(libraryKey: String, url: URL, title: String, isHLS: Bool) {
+        guard var record = library[libraryKey] else { return }
         record.isHLS = isHLS
         record.state = .downloading
-        records[key] = record
-        saveRecords()
+        library[libraryKey] = record
+        publishActiveRecords()
+        saveLibrary()
 
         if isHLS {
             let cookies = HTTPCookieStorage.shared.cookies(for: url) ?? []
@@ -171,43 +239,41 @@ final class DownloadManager: NSObject, ObservableObject {
                 assetArtworkData: nil,
                 options: nil
             ) else {
-                fail(key: key)
+                fail(libraryKey: libraryKey)
                 return
             }
-            task.taskDescription = key
-            avTaskKeys[task.taskIdentifier] = key
-            keyToTask[key] = task
-            observeProgress(task: task, key: key)
+            task.taskDescription = libraryKey
+            avTaskKeys[task.taskIdentifier] = libraryKey
+            keyToTask[libraryKey] = task
+            observeProgress(task: task, libraryKey: libraryKey)
             task.resume()
         } else {
             let task = fileSession.downloadTask(with: url)
-            task.taskDescription = key
-            fileTaskKeys[task.taskIdentifier] = key
-            keyToTask[key] = task
-            observeProgress(task: task, key: key)
+            task.taskDescription = libraryKey
+            fileTaskKeys[task.taskIdentifier] = libraryKey
+            keyToTask[libraryKey] = task
+            observeProgress(task: task, libraryKey: libraryKey)
             task.resume()
         }
     }
 
-    private func observeProgress(task: URLSessionTask, key: String) {
-        progressObservations[key]?.invalidate()
-        progressObservations[key] = task.progress.observe(\.fractionCompleted, options: [.new]) { [weak self] progress, _ in
+    private func observeProgress(task: URLSessionTask, libraryKey: String) {
+        progressObservations[libraryKey]?.invalidate()
+        progressObservations[libraryKey] = task.progress.observe(\.fractionCompleted, options: [.new]) { [weak self] progress, _ in
             let fraction = progress.fractionCompleted
             Task { @MainActor in
-                self?.publishProgress(key: key, fraction: fraction)
+                self?.publishProgress(libraryKey: libraryKey, fraction: fraction)
             }
         }
     }
 
-    private func publishProgress(key: String, fraction: Double) {
+    private func publishProgress(libraryKey: String, fraction: Double) {
         let clamped = min(max(fraction, 0), 0.99)
-        // Throttle UI churn but still move the bar regularly.
-        if let last = lastProgressPublish[key], Date().timeIntervalSince(last) < 0.25, clamped < 0.99 {
+        if let last = lastProgressPublish[libraryKey], Date().timeIntervalSince(last) < 0.25, clamped < 0.99 {
             return
         }
-        lastProgressPublish[key] = Date()
-        update(key: key) {
-            // Never regress progress (some delegates report 0 mid-flight).
+        lastProgressPublish[libraryKey] = Date()
+        update(libraryKey: libraryKey) {
             if clamped > $0.progress {
                 $0.progress = clamped
             }
@@ -216,80 +282,112 @@ final class DownloadManager: NSObject, ObservableObject {
     }
 
     func cancelDownload(key: String) {
-        keyToTask[key]?.cancel()
-        keyToTask[key] = nil
-        progressObservations[key]?.invalidate()
-        progressObservations[key] = nil
-        keyExpectedDuration[key] = nil
-        lastProgressPublish[key] = nil
-        if let record = records[key], record.state != .completed {
+        guard let libKey = libraryKeyForActiveContentKey(key) else { return }
+        keyToTask[libKey]?.cancel()
+        keyToTask[libKey] = nil
+        progressObservations[libKey]?.invalidate()
+        progressObservations[libKey] = nil
+        keyExpectedDuration[libKey] = nil
+        lastProgressPublish[libKey] = nil
+        if let record = library[libKey], record.state != .completed {
             if let url = record.localURL {
                 try? FileManager.default.removeItem(at: url)
             }
-            records.removeValue(forKey: key)
-            saveRecords()
+            library.removeValue(forKey: libKey)
+            publishActiveRecords()
+            saveLibrary()
         }
     }
 
     func deleteDownload(key: String) {
-        keyToTask[key]?.cancel()
-        keyToTask[key] = nil
-        progressObservations[key]?.invalidate()
-        progressObservations[key] = nil
-        keyExpectedDuration[key] = nil
-        lastProgressPublish[key] = nil
-        if let record = records[key], let url = record.localURL {
+        guard let libKey = libraryKeyForActiveContentKey(key) else { return }
+        keyToTask[libKey]?.cancel()
+        keyToTask[libKey] = nil
+        progressObservations[libKey]?.invalidate()
+        progressObservations[libKey] = nil
+        keyExpectedDuration[libKey] = nil
+        lastProgressPublish[libKey] = nil
+        if let record = library[libKey], let url = record.localURL {
             try? FileManager.default.removeItem(at: url)
         }
-        records.removeValue(forKey: key)
-        saveRecords()
+        library.removeValue(forKey: libKey)
+        publishActiveRecords()
+        saveLibrary()
     }
 
     func deleteDownload(contentId: String, episodeId: String?) {
         deleteDownload(key: Self.makeKey(contentId: contentId, episodeId: episodeId))
     }
 
-    // MARK: - Mutation helpers
-
-    private func fail(key: String) {
-        guard var record = records[key] else { return }
-        record.state = .failed
-        records[key] = record
-        saveRecords()
+    private func libraryKeyForActiveContentKey(_ contentKey: String) -> String? {
+        guard let owner = activeAccountId else { return nil }
+        return Self.libraryKey(owner: owner, contentKey: contentKey)
     }
 
-    private func update(key: String, _ mutate: (inout DownloadRecord) -> Void) {
-        guard var record = records[key] else { return }
+    // MARK: - Mutation helpers
+
+    private func fail(libraryKey: String) {
+        update(libraryKey: libraryKey) { $0.state = .failed }
+        saveLibrary()
+    }
+
+    private func update(libraryKey: String, _ mutate: (inout DownloadRecord) -> Void) {
+        guard var record = library[libraryKey] else { return }
         mutate(&record)
-        // Assign a new dictionary so @Published always notifies observers.
-        var next = records
-        next[key] = record
+        library[libraryKey] = record
+        publishActiveRecords()
+    }
+
+    private func publishActiveRecords() {
+        guard let owner = activeAccountId else {
+            records = [:]
+            return
+        }
+        var next: [String: DownloadRecord] = [:]
+        for record in library.values where record.ownerAccountId == owner {
+            next[record.key] = record
+        }
         records = next
     }
 
     // MARK: - Persistence
 
-    private func loadRecords() {
+    private func loadLibrary() {
         guard let data = try? Data(contentsOf: storeURL),
               let decoded = try? JSONDecoder().decode([DownloadRecord].self, from: data)
         else { return }
+
         var map: [String: DownloadRecord] = [:]
+        var purgedOrphans = false
         for var record in decoded {
-            // Interrupted transfers are failed until a background session reattaches.
             if record.state == .downloading || record.state == .queued {
                 record.state = .failed
             }
-            // Completed without a readable file cannot be played offline.
             if record.state == .completed, record.localURL == nil {
                 record.state = .failed
             }
-            map[record.key] = record
+            // Legacy device-wide downloads (no owner) are inaccessible — remove for privacy.
+            guard let owner = record.ownerAccountId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !owner.isEmpty
+            else {
+                if let url = record.localURL {
+                    try? FileManager.default.removeItem(at: url)
+                }
+                purgedOrphans = true
+                continue
+            }
+            record.ownerAccountId = owner
+            let libKey = Self.libraryKey(owner: owner, contentKey: record.key)
+            map[libKey] = record
         }
-        records = map
+        library = map
+        if purgedOrphans {
+            saveLibrary()
+        }
     }
 
-    private func saveRecords() {
-        let array = Array(records.values)
+    private func saveLibrary() {
+        let array = Array(library.values)
         guard let data = try? JSONEncoder().encode(array) else { return }
         try? data.write(to: storeURL, options: .atomic)
     }
@@ -298,39 +396,41 @@ final class DownloadManager: NSObject, ObservableObject {
         avSession.getAllTasks { [weak self] tasks in
             guard let self else { return }
             for task in tasks {
-                guard let key = task.taskDescription else { continue }
-                self.avTaskKeys[task.taskIdentifier] = key
-                self.keyToTask[key] = task
-                self.observeProgress(task: task, key: key)
-                self.update(key: key) { $0.state = .downloading }
+                guard let libKey = task.taskDescription else { continue }
+                self.avTaskKeys[task.taskIdentifier] = libKey
+                self.keyToTask[libKey] = task
+                self.observeProgress(task: task, libraryKey: libKey)
+                self.update(libraryKey: libKey) { $0.state = .downloading }
             }
-            self.saveRecords()
+            self.saveLibrary()
         }
         fileSession.getAllTasks { [weak self] tasks in
             guard let self else { return }
             for task in tasks {
-                guard let key = task.taskDescription else { continue }
-                self.fileTaskKeys[task.taskIdentifier] = key
-                self.keyToTask[key] = task
-                self.observeProgress(task: task, key: key)
-                self.update(key: key) { $0.state = .downloading }
+                guard let libKey = task.taskDescription else { continue }
+                self.fileTaskKeys[task.taskIdentifier] = libKey
+                self.keyToTask[libKey] = task
+                self.observeProgress(task: task, libraryKey: libKey)
+                self.update(libraryKey: libKey) { $0.state = .downloading }
             }
-            self.saveRecords()
+            self.saveLibrary()
         }
     }
 
-    /// Re-check files on disk (call after launch / before offline library).
     func validateOfflineLibrary() {
         var changed = false
-        for (key, record) in records where record.state == .completed {
+        for (libKey, record) in library where record.state == .completed {
             if record.localURL == nil {
                 var fixed = record
                 fixed.state = .failed
-                records[key] = fixed
+                library[libKey] = fixed
                 changed = true
             }
         }
-        if changed { saveRecords() }
+        if changed {
+            publishActiveRecords()
+            saveLibrary()
+        }
     }
 }
 
@@ -344,11 +444,11 @@ extension DownloadManager: AVAssetDownloadDelegate {
     ) {
         let identifier = assetDownloadTask.taskIdentifier
         Task { @MainActor in
-            guard let key = self.avTaskKeys[identifier] else { return }
-            self.update(key: key) {
+            guard let libKey = self.avTaskKeys[identifier] else { return }
+            self.update(libraryKey: libKey) {
                 $0.relativePath = DownloadRecord.storagePath(for: location.standardizedFileURL)
             }
-            self.saveRecords()
+            self.saveLibrary()
         }
     }
 
@@ -367,11 +467,11 @@ extension DownloadManager: AVAssetDownloadDelegate {
         var progress = expected > 0 ? min(loaded / expected, 0.99) : 0
         let identifier = assetDownloadTask.taskIdentifier
         Task { @MainActor in
-            guard let key = self.avTaskKeys[identifier] else { return }
-            if progress <= 0, let duration = self.keyExpectedDuration[key], duration > 0 {
+            guard let libKey = self.avTaskKeys[identifier] else { return }
+            if progress <= 0, let duration = self.keyExpectedDuration[libKey], duration > 0 {
                 progress = min(loaded / duration, 0.99)
             }
-            self.publishProgress(key: key, fraction: progress)
+            self.publishProgress(libraryKey: libKey, fraction: progress)
         }
     }
 }
@@ -385,11 +485,11 @@ extension DownloadManager: URLSessionDownloadDelegate {
         didFinishDownloadingTo location: URL
     ) {
         let identifier = downloadTask.taskIdentifier
-        // Move the temp file synchronously (it is deleted when this method returns).
         let fm = FileManager.default
         let dir = fileDownloadsDir
         let filename = "\(downloadTask.taskDescription ?? UUID().uuidString).mp4"
             .replacingOccurrences(of: "|", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
         let dest = dir.appendingPathComponent(filename)
         try? fm.removeItem(at: dest)
         var moved = false
@@ -401,12 +501,12 @@ extension DownloadManager: URLSessionDownloadDelegate {
         }
         let relative = moved ? DownloadRecord.storagePath(for: dest) : nil
         Task { @MainActor in
-            guard let key = self.fileTaskKeys[identifier] else { return }
-            self.update(key: key) {
+            guard let libKey = self.fileTaskKeys[identifier] else { return }
+            self.update(libraryKey: libKey) {
                 $0.relativePath = relative
                 if relative == nil { $0.state = .failed }
             }
-            self.saveRecords()
+            self.saveLibrary()
         }
     }
 
@@ -422,10 +522,10 @@ extension DownloadManager: URLSessionDownloadDelegate {
             : 0
         let identifier = downloadTask.taskIdentifier
         Task { @MainActor in
-            guard let key = self.fileTaskKeys[identifier] else { return }
-            self.publishProgress(key: key, fraction: progress)
+            guard let libKey = self.fileTaskKeys[identifier] else { return }
+            self.publishProgress(libraryKey: libKey, fraction: progress)
             if totalBytesExpectedToWrite > 0 {
-                self.update(key: key) { $0.totalBytes = totalBytesExpectedToWrite }
+                self.update(libraryKey: libKey) { $0.totalBytes = totalBytesExpectedToWrite }
             }
         }
     }
@@ -451,37 +551,33 @@ extension DownloadManager: URLSessionTaskDelegate {
         let nsError = error as NSError?
         let cancelled = nsError?.code == NSURLErrorCancelled
         Task { @MainActor in
-            let key = self.avTaskKeys[identifier] ?? self.fileTaskKeys[identifier]
+            let libKey = self.avTaskKeys[identifier] ?? self.fileTaskKeys[identifier]
             self.avTaskKeys[identifier] = nil
             self.fileTaskKeys[identifier] = nil
-            guard let key else { return }
-            self.keyToTask[key] = nil
-            self.progressObservations[key]?.invalidate()
-            self.progressObservations[key] = nil
-            self.keyExpectedDuration[key] = nil
-            self.lastProgressPublish[key] = nil
+            guard let libKey else { return }
+            self.keyToTask[libKey] = nil
+            self.progressObservations[libKey]?.invalidate()
+            self.progressObservations[libKey] = nil
+            self.keyExpectedDuration[libKey] = nil
+            self.lastProgressPublish[libKey] = nil
 
-            if cancelled {
-                // Cancellation is handled by cancel/delete already.
-                return
-            }
+            if cancelled { return }
 
             if error != nil {
-                self.update(key: key) { $0.state = .failed }
-                self.saveRecords()
+                self.update(libraryKey: libKey) { $0.state = .failed }
+                self.saveLibrary()
                 return
             }
 
-            self.update(key: key) { record in
+            self.update(libraryKey: libKey) { record in
                 if record.relativePath != nil {
                     record.progress = 1
-                    // Require the file to still be on disk.
                     record.state = record.localURL != nil ? .completed : .failed
                 } else {
                     record.state = .failed
                 }
             }
-            self.saveRecords()
+            self.saveLibrary()
         }
     }
 }

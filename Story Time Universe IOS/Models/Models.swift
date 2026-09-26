@@ -6,6 +6,17 @@ nonisolated struct SessionUser: Codable, Equatable {
     let email: String?
     let image: String?
     let role: String?
+
+    /// Stable key used to scope offline downloads to this account.
+    var downloadAccountId: String? {
+        if let id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return id.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let email, !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        return nil
+    }
 }
 
 nonisolated struct AuthSession: Codable, Equatable {

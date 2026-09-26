@@ -98,7 +98,7 @@ struct SignInView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                     .padding(.horizontal, 22)
 
-                    if !DownloadManager.shared.completedRecords.isEmpty {
+                    if DownloadManager.shared.hasPlayableDownloadsForActiveAccount {
                         Button {
                             appState.openOfflineLibrary()
                         } label: {

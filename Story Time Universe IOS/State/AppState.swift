@@ -92,9 +92,12 @@ final class AppState: ObservableObject {
         let offlineSplash: Duration = .milliseconds(900)
 
         // Offline-first: wait for real path status, then jump to downloads if needed.
+        // `activeAccountId` may already be restored from UserDefaults (last sign-in);
+        // logout clears that key so signed-out users never get this path.
         await network.waitForInitialPath()
         DownloadManager.shared.validateOfflineLibrary()
-        let hasDownloads = !DownloadManager.shared.completedRecords.isEmpty
+
+        let hasDownloads = DownloadManager.shared.hasPlayableDownloadsForActiveAccount
 
         if !network.isOnline && hasDownloads {
             await waitRemainingSplash(from: splashStarted, minimum: offlineSplash)
@@ -108,6 +111,8 @@ final class AppState: ObservableObject {
                 try await AuthService.shared.fetchSession()
             }
             self.session = session
+            bindDownloads(to: session)
+
             if session?.user != nil {
                 subscription = try? await withTimeout(seconds: 4) {
                     try await ViewerAPI.shared.fetchSubscription()
@@ -121,24 +126,33 @@ final class AppState: ObservableObject {
                 if needsPaymentAttention {
                     presentPaywall(.subscribe)
                 }
-            } else if hasDownloads && !network.isOnline {
-                route = .offlineDownloads
             } else {
+                // No session → no download access (even if files remain for a prior owner).
+                DownloadManager.shared.clearAccountAccess()
                 route = .signIn
             }
         } catch {
             session = nil
-            // Prefer offline library whenever we have playable downloads and the network
-            // path is dead / flaky / timed out — never leave the user stuck on splash.
-            if hasDownloads {
+            // Network failed: allow offline library only if a prior sign-in is still bound.
+            if DownloadManager.shared.hasPlayableDownloadsForActiveAccount {
                 await waitRemainingSplash(from: splashStarted, minimum: offlineSplash)
                 bootstrapError = nil
                 route = .offlineDownloads
             } else {
+                DownloadManager.shared.clearAccountAccess()
                 bootstrapError = error.localizedDescription
                 await waitRemainingSplash(from: splashStarted, minimum: minimumSplash)
                 route = .signIn
             }
+        }
+    }
+
+    private func bindDownloads(to session: AuthSession?) {
+        if let accountId = session?.user?.downloadAccountId {
+            DownloadManager.shared.bindAccount(accountId)
+        } else {
+            // No authenticated user → no download access.
+            DownloadManager.shared.clearAccountAccess()
         }
     }
 
@@ -167,6 +181,7 @@ final class AppState: ObservableObject {
         defer { isBusy = false }
         let session = try await AuthService.shared.signIn(email: email, password: password)
         self.session = session
+        bindDownloads(to: session)
         APIClient.shared.setViewerProfileCookie(nil)
         activeProfile = nil
         await refreshSubscriptionFromServer()
@@ -182,6 +197,7 @@ final class AppState: ObservableObject {
         defer { isBusy = false }
         let session = try await AuthService.shared.signUp(email: email, password: password, name: name)
         self.session = session
+        bindDownloads(to: session)
         APIClient.shared.setViewerProfileCookie(nil)
         activeProfile = nil
         await refreshSubscriptionFromServer()
@@ -222,6 +238,7 @@ final class AppState: ObservableObject {
                 do {
                     if let session = try await AuthService.shared.adoptWebSession(), session.user != nil {
                         self.session = session
+                        self.bindDownloads(to: session)
                         APIClient.shared.setViewerProfileCookie(nil)
                         self.activeProfile = nil
                         self.subscription = try? await ViewerAPI.shared.fetchSubscription()
@@ -245,7 +262,12 @@ final class AppState: ObservableObject {
     func deleteAccount(password: String) async throws {
         isBusy = true
         defer { isBusy = false }
+        let accountId = session?.user?.downloadAccountId
         try await AuthService.shared.deleteAccount(password: password)
+        if let accountId {
+            DownloadManager.shared.wipeDownloads(forAccount: accountId)
+        }
+        DownloadManager.shared.clearAccountAccess()
         session = nil
         activeProfile = nil
         subscription = nil
@@ -257,6 +279,7 @@ final class AppState: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         await AuthService.shared.signOut()
+        DownloadManager.shared.clearAccountAccess()
         session = nil
         activeProfile = nil
         subscription = nil
@@ -313,7 +336,7 @@ final class AppState: ObservableObject {
 
     /// Switch to the in-app Downloads tab (or offline library when completely offline).
     func openDownloads() {
-        if !NetworkMonitor.shared.isOnline && !DownloadManager.shared.completedRecords.isEmpty {
+        if !NetworkMonitor.shared.isOnline && DownloadManager.shared.hasPlayableDownloadsForActiveAccount {
             openOfflineLibrary()
             return
         }
